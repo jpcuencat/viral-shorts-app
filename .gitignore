@@ -54,7 +54,6 @@ public/temp/*
 
 # binaries
 ffmpeg/
-temp_reference_repo/
 
 # temp scripts
 test-*.js
