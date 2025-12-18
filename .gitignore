@@ -39,3 +39,23 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# secrets
+client_secret.json
+tokens.json
+
+# large media
+public/backgrounds/*
+!public/backgrounds/.gitkeep
+test-audio.mp3
+public/generated/*
+public/output/*
+public/temp/*
+
+# binaries
+ffmpeg/
+temp_reference_repo/
+
+# temp scripts
+test-*.js
+inspect-*.js

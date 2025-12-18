@@ -7,6 +7,7 @@ import {
     SelectTrigger,
     SelectValue
 } from "@/components/ui/select"
+import { Button } from "@/components/ui/button"
 import { useRouter, useSearchParams } from "next/navigation"
 
 interface IdeaFiltersProps {
@@ -64,6 +65,23 @@ export function IdeaFilters({ categories }: IdeaFiltersProps) {
                     ))}
                 </SelectContent>
             </Select>
-        </div>
+
+
+            <Button
+                variant={searchParams.get('show_archived') === 'true' ? 'secondary' : 'outline'}
+                onClick={() => {
+                    const params = new URLSearchParams(searchParams)
+                    const isArchived = params.get('show_archived') === 'true'
+                    if (isArchived) {
+                        params.delete('show_archived')
+                    } else {
+                        params.set('show_archived', 'true')
+                    }
+                    router.push(`/ideas?${params.toString()}`)
+                }}
+            >
+                {searchParams.get('show_archived') === 'true' ? 'Hide Archived' : 'Show Archived'}
+            </Button>
+        </div >
     )
 }

@@ -33,5 +33,23 @@ export async function deleteIdea(id: string) {
     }
 
     revalidatePath('/ideas')
+    revalidatePath('/ideas')
+    return { success: true }
+}
+
+export async function toggleArchiveIdea(id: string, isArchived: boolean) {
+    const supabase = await createClient()
+
+    const { error } = await supabase
+        .from('ideas')
+        .update({ is_archived: isArchived })
+        .eq('id', id)
+
+    if (error) {
+        return { error: 'Failed to update archive status' }
+    }
+
+    revalidatePath('/ideas')
+    revalidatePath(`/ideas/${id}`)
     return { success: true }
 }

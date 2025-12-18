@@ -4,11 +4,13 @@ import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 import { Plus, Sparkles, Clock, Calendar, FileText } from 'lucide-react'
 import { IdeaFilters } from '@/components/ideas/idea-filters'
+import { IdeaArchiveButton } from '@/components/ideas/idea-archive-button'
 
 // Update signature to accept searchParams
-export default async function IdeasPage({ searchParams }: { searchParams: Promise<{ status?: string, category?: string }> }) {
+export default async function IdeasPage({ searchParams }: { searchParams: Promise<{ status?: string, category?: string, show_archived?: string }> }) {
     const supabase = await createClient()
-    const { status, category } = await searchParams
+    const { status, category, show_archived } = await searchParams
+    const showArchived = show_archived === 'true'
 
     // Fetch categories for filter
     const { data: categories } = await supabase.from('categories').select('id, name').order('name')
@@ -25,6 +27,16 @@ export default async function IdeasPage({ searchParams }: { searchParams: Promis
     }
     if (category) {
         query = query.eq('category_id', category)
+    }
+
+    // Archive Logic: 
+    // If NOT showing archived explicitly, filtering OUT archived items.
+    // Use user request: "see only active ones but with a button to see all states"
+    // So if showArchived is FALSE, we hide archived.
+    // If showArchived is TRUE, we show everything (don't filter is_archived) OR show only archived?
+    // "ver todos los estados" -> See ALL.
+    if (!showArchived) {
+        query = query.eq('is_archived', false)
     }
 
     const { data: ideas } = await query
@@ -57,7 +69,7 @@ export default async function IdeasPage({ searchParams }: { searchParams: Promis
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
                 {ideas && ideas.length > 0 ? (
                     ideas.map((idea: any) => (
-                        <div key={idea.id} className="group relative flex flex-col justify-between space-y-4 rounded-xl border bg-card p-6 shadow-sm transition-all hover:shadow-md">
+                        <div key={idea.id} className={`group relative flex flex-col justify-between space-y-4 rounded-xl border bg-card p-6 shadow-sm transition-all hover:shadow-md ${idea.is_archived ? 'opacity-60 grayscale' : ''}`}>
                             <div className="space-y-3">
                                 <div className="flex items-center justify-between">
                                     {idea.categories?.name ? (
@@ -65,13 +77,19 @@ export default async function IdeasPage({ searchParams }: { searchParams: Promis
                                     ) : (
                                         <Badge variant="outline">Uncategorized</Badge>
                                     )}
-                                    <Badge variant={
-                                        idea.status === 'approved' ? 'default' :
-                                            idea.status === 'rejected' ? 'destructive' :
-                                                'secondary'
-                                    }>
-                                        {idea.status ? idea.status.replace('_', ' ') : 'Draft'}
-                                    </Badge>
+
+                                    <div className="flex items-center gap-1">
+                                        <Badge variant={
+                                            idea.status === 'approved' ? 'default' :
+                                                idea.status === 'rejected' ? 'destructive' :
+                                                    'secondary'
+                                        }>
+                                            {idea.status ? idea.status.replace('_', ' ') : 'Draft'}
+                                        </Badge>
+
+                                        {/* Archive Button */}
+                                        <IdeaArchiveButton id={idea.id} isArchived={!!idea.is_archived} />
+                                    </div>
                                 </div>
                                 <h3 className="font-semibold text-lg leading-tight tracking-tight line-clamp-2">
                                     <Link href={`/ideas/${idea.id}`} className="hover:underline">

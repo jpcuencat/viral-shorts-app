@@ -29,10 +29,13 @@ export async function generateScript(ideaId: string) {
       - Descripción: "${idea.description}"
       - Categoría: "${idea.categories?.name || 'General'}"
       
-      INSTRUCCIONES CRÍTICAS PARA EVITAR ALUCINACIONES:
-      1. NO inventes estadísticas o datos falsos. Si necesitas un dato, usa marcadores como "[INSERTAR FECHA]" o "[DATOS AQUÍ]".
-      2. Cíñete estrictamente a la premisa de la descripción.
-      3. Estructura el guion para máxima retención (Loop structure).
+      INSTRUCCIONES CRÍTICAS DE CONTENIDO:
+      1. PROHIBIDO usar marcadores de posición o corchetes como "[INSERTAR FECHA]", "[NOMBRE]", "[DATOS AQUÍ]".
+      2. DEBES completar todos los datos. Si la idea se refiere a una persona real (ej: "Messi", "Cristiano"), USA DATOS REALES Y VERÍDICOS.
+      3. Si la idea es genérica o ficticia, INVENTA nombres y situaciones realistas y coherentes para completar la historia. NUNCA dejes espacios en blanco.
+      4. El guion debe estar listo para leerse/grabarse tal cual.
+      5. Estructura de Loop (el final conecta con el inicio).
+      6. Todo el contenido debe ser en ESPAÑOL NEUTRO/LATINO.
 
       FORMATO JSON REQUERIDO:
       {
@@ -42,11 +45,17 @@ export async function generateScript(ideaId: string) {
         "content": {
            "hook_visual": "Descripción visual de los primeros 3s",
            "hook_audio": "La primera frase que debes decir (Gritando/Susurrando/Normal)",
+           "hook_caption": "Texto corto para el video (max 5 palabras)",
            "body_paragraphs": [
               "Párrafo 1 del desarrollo...",
               "Párrafo 2 del desarrollo..."
            ],
-           "cta": "Llamada a la acción final"
+           "body_captions": [
+              "Caption corto para el párrafo 1",
+              "Caption corto para el párrafo 2"
+           ],
+           "cta": "Llamada a la acción final",
+           "cta_caption": "Texto final en pantalla"
         },
         "estimated_duration": 55
       }

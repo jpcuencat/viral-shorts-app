@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge"
 import Link from 'next/link'
 import { Sparkles, Library, Layers, ArrowRight, Play, FileText, TrendingUp } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
+import { RefreshTrendsButton } from '@/components/dashboard/refresh-trends-button'
 
 export default async function DashboardPage() {
     const supabase = await createClient()
@@ -85,6 +86,49 @@ export default async function DashboardPage() {
             </div>
 
             <div className="grid gap-6 md:grid-cols-2">
+                {/* Trending Now Section */}
+                <div className="col-span-full">
+                    <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                            <TrendingUp className="h-5 w-5 text-red-500" />
+                            <h2 className="text-xl font-semibold tracking-tight">Trending Now</h2>
+                        </div>
+                        <RefreshTrendsButton />
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-3">
+                        {/* We will fetch trends here */}
+                        {(await supabase.from('trends').select('*').order('created_at', { ascending: false }).limit(3)).data?.map((trend: any) => (
+                            <Card key={trend.id} className="bg-gradient-to-br from-red-50 to-white border-red-100">
+                                <CardHeader className="pb-2">
+                                    <CardTitle className="text-sm font-medium line-clamp-2 leading-tight">
+                                        <Link href={trend.link || '#'} target="_blank" className="hover:underline">
+                                            {trend.title}
+                                        </Link>
+                                    </CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                    <div className="text-xs text-muted-foreground mb-2">
+                                        Traffic: <span className="font-semibold text-red-600">{trend.traffic}</span>
+                                    </div>
+                                    {trend.processed ? (
+                                        <div className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                                            <Sparkles className="w-3 h-3 mr-1" />
+                                            Auto-Processed
+                                        </div>
+                                    ) : (
+                                        <Badge variant="outline" className="text-xs">New</Badge>
+                                    )}
+                                </CardContent>
+                            </Card>
+                        )) || (
+                                <div className="col-span-3 text-center py-8 text-muted-foreground">
+                                    No trends fetched yet. Click Refresh to start.
+                                </div>
+                            )}
+                    </div>
+                </div>
+
                 {/* Recent Files Section */}
                 <div className="space-y-4">
                     <div className="flex items-center justify-between">
@@ -138,7 +182,7 @@ export default async function DashboardPage() {
                                         <div className="h-2 w-full bg-secondary rounded-full overflow-hidden">
                                             <div
                                                 className={`h-full rounded-full ${score >= 90 ? 'bg-emerald-500' :
-                                                        score >= 70 ? 'bg-yellow-500' : 'bg-red-500'
+                                                    score >= 70 ? 'bg-yellow-500' : 'bg-red-500'
                                                     }`}
                                                 style={{ width: `${score}%` }}
                                             />
