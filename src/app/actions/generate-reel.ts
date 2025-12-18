@@ -71,11 +71,19 @@ export async function generateReel(scriptId: string) {
             // 2. BODY (Iterate all paragraphs)
             if (content.body_paragraphs && Array.isArray(content.body_paragraphs)) {
                 content.body_paragraphs.forEach((para: string, index: number) => {
-                    const caption = content.body_captions?.[index] || para.split('.')[0].slice(0, 40) // Use specific caption or first sentence truncated
-                    scenesData.push({
-                        text: para,
-                        visual: `Scene ${index + 1} of ${script.ideas?.title}`,
-                        caption: caption
+                    // SPLIT PARAGRAPH INTO SENTENCES
+                    // Regex looks for (. ! ?) followed by space or end of string
+                    const sentences = para.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [para]
+
+                    sentences.forEach((sentence, subIndex) => {
+                        const cleanSentence = sentence.trim()
+                        if (cleanSentence.length > 5) { // Skip empty/tiny fragments
+                            scenesData.push({
+                                text: cleanSentence,
+                                visual: `Scene ${index + 1}.${subIndex + 1} of ${script.ideas?.title}`,
+                                caption: cleanSentence.split(' ').slice(0, 3).join(' ') // Short summary
+                            })
+                        }
                     })
                 })
             } else {
@@ -107,22 +115,13 @@ export async function generateReel(scriptId: string) {
 
             // 4.1 Check for Background Videos
             const bgDir = path.join(process.cwd(), 'public', 'backgrounds')
-            let backgroundVideoPath: string | null = null
-            let currentVideoTime = 0
 
             // Ensure dir exists
             if (!fs.existsSync(bgDir)) fs.mkdirSync(bgDir, { recursive: true })
 
+            // Get ALL available background files
             const backgroundFiles = fs.readdirSync(bgDir).filter(f => f.endsWith('.mp4'))
-
-            if (backgroundFiles.length > 0) {
-                // Select Random Background
-                const randomFile = backgroundFiles[Math.floor(Math.random() * backgroundFiles.length)]
-                backgroundVideoPath = path.join(bgDir, randomFile)
-                // Random start time between 0 and 30s
-                currentVideoTime = Math.floor(Math.random() * 30)
-                console.log(`[ReelGen] Using Gameplay Background: ${randomFile} starting at ${currentVideoTime}s`)
-            }
+            console.log(`[ReelGen] Found ${backgroundFiles.length} background videos available for dynamic switching.`)
 
             const processedScenes = []
 
@@ -135,26 +134,29 @@ export async function generateReel(scriptId: string) {
 
                 // A.1 Generate Subtitles (Dynamic SRT)
                 const duration = await videoService.getAudioDuration(audioPath)
-
-                // Use caption text if available (short) or truncated text.
-                // Actually for Hormozi style, we want the FULL spoken text if possible, but split. 
-                // scene.text is the spoken audio. scene.caption is the summary.
-                // We should sync the SPOKEN text (scene.text) for true karaoke, 
-                // BUT current scene.text might be long paragraphs.
-                // Let's use scene.text for now as it matches the audio.
                 const subtitlePath = await subtitleService.generateSRT(scene.text, duration)
 
                 let imagePath = ''
-                const sceneVideoStartTime = currentVideoTime
+                // Default to 0, will be randomized if video is used
+                let sceneVideoStartTime = 0
                 let imageUrl = ''
 
-                if (backgroundVideoPath) {
-                    // USE GAMEPLAY VIDEO
-                    imagePath = backgroundVideoPath
-                    currentVideoTime += duration
-                    imageUrl = 'Gameplay Video'
+                // DYNAMIC BACKGROUND LOGIC:
+                // If we have gameplay videos, pick a RANDOM one for EACH scene.
+                // This creates the "Fast Paced / Dynamic" effect (Minecraft -> GTA -> Parkour)
+                if (backgroundFiles.length > 0) {
+                    const randomFile = backgroundFiles[Math.floor(Math.random() * backgroundFiles.length)]
+
+                    imagePath = path.join(bgDir, randomFile)
+                    // Random start time between 0 and 60s (or more if clips are longer)
+                    // Since we stream_loop, safe to pick any start.
+                    sceneVideoStartTime = Math.floor(Math.random() * 60)
+
+                    imageUrl = `Gameplay: ${randomFile}`
+                    console.log(`[ReelGen] Scene ${i + 1}: Using Verified Gameplay ${randomFile} at ${sceneVideoStartTime}s`)
+
                 } else {
-                    // B. AI GENERATION (Pollinations)
+                    // B. AI GENERATION (Pollinations) - FALLBACK if no videos exist
                     console.log(`[ReelGen] Generando Imagen IA for scene ${i + 1}...`)
 
                     const basePrompt = (scene.visual || '').replace(/[^\w\s]/gi, '')
@@ -214,26 +216,52 @@ export async function generateReel(scriptId: string) {
                 const auditScenes = processedScenes.slice(0, 2)
 
                 const promptParts: any[] = [
-                    `Actúa como un crítico de video experto. Evalúa la coherencia entre el GUIÓN y el CONTENIDO VISUAL.
-                     Tu objetivo es dar una puntuación detallada de 0 a 100.
+                    `Actúa como un crítico de video experto en VIRAL SHORTS y TIKTOK.
                      
                      MUESTRAS DEL VIDEO GENERADO:
+                     (Se adjuntan frames visuales y el texto correspondiente)
+
+                     CRITERIOS DE EVALUACIÓN (Adaptables al Estilo):
+                     
+                     1. ESTILO "BRAINROT" / GAMEPLAY (Minecraft, GTA, Parkour):
+                        - Si ves videojuegos de fondo, NO penalices la falta de relación semántica con el texto. Es intencional.
+                        - Evalúa: ¿El video es HD? ¿Se ve fluido? ¿Hay subtítulos o texto legible?
+                        - Si cumple esto, la puntuación visual debe ser ALTA (80-100).
+                     
+                     2. ESTILO "ILLUSTRATIVE" (Imágenes IA):
+                        - Si son imágenes estáticas generadas, SÍ evalúa que coincidan con el texto.
+                        - Si el texto dice "gato" y ves un "perro", penaliza.
+
+                     Tu objetivo es predecir el POTENCIAL VIRAL (Retention Score).
                     `
                 ]
 
                 for (const scene of auditScenes) {
                     promptParts.push(`\n--- ESCENA ---\nTexto: "${scene.sceneData.text}"\nImagen Generada: `)
 
-                    // Read Image as Base64
-                    const imageBuffer = fs.readFileSync(scene.imagePath)
-                    const base64Image = imageBuffer.toString('base64')
+                    let imagePathToAudit = scene.imagePath
 
-                    promptParts.push({
-                        inlineData: {
-                            data: base64Image,
-                            mimeType: "image/jpeg"
-                        }
-                    })
+                    // If video, extract a frame first
+                    if (scene.imagePath.endsWith('.mp4')) {
+                        console.log(`[ReelGen] Extracting frame from video for audit: ${scene.imagePath}`)
+                        const framePath = await videoService.extractFrame(scene.imagePath)
+                        if (framePath) imagePathToAudit = framePath
+                    }
+
+                    // Read Image as Base64 (ignoring if still mp4/failed)
+                    if (imagePathToAudit && !imagePathToAudit.endsWith('.mp4')) {
+                        const imageBuffer = fs.readFileSync(imagePathToAudit)
+                        const base64Image = imageBuffer.toString('base64')
+
+                        promptParts.push({
+                            inlineData: {
+                                data: base64Image,
+                                mimeType: "image/jpeg"
+                            }
+                        })
+                    } else {
+                        promptParts.push('[NO SE PUDO EXTRAER IMAGEN DEL VIDEO]')
+                    }
                 }
 
                 promptParts.push(`\n

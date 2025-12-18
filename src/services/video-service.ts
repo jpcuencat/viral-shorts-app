@@ -119,8 +119,8 @@ class VideoService {
 
             if (isVideoBackground) {
                 // VIDEO BACKGROUND LOGIC
-                // Seek to start time
-                command.input(imagePath).inputOptions([`-ss ${videoStartTime}`])
+                // Use stream_loop -1 (infinite) BEFORE input to ensure it never runs out
+                command.input(imagePath).inputOptions(['-stream_loop -1', `-ss ${videoStartTime}`])
             } else {
                 // IMAGE BACKGROUND LOGIC
                 command.input(imagePath).inputOptions(['-loop 1'])
@@ -157,6 +157,31 @@ class VideoService {
     }
 
     /**
+     * EXTRACT FRAME FOR AI AUDIT
+     * Extracts a jpg frame at 1s mark from the video
+     */
+    async extractFrame(videoPath: string): Promise<string> {
+        return new Promise((resolve, reject) => {
+            const framePath = path.join(this.tempDir, `frame_${uuidv4()}.jpg`)
+
+            // Normalize for Windows
+            const safeVideoPath = videoPath.replace(/\\/g, '/')
+            const safeFramePath = framePath.replace(/\\/g, '/')
+
+            ffmpeg()
+                .input(safeVideoPath)
+                .outputOptions(['-vframes 1', '-ss 00:00:01']) // Capture 1 frame at 1s
+                .output(safeFramePath)
+                .on('end', () => resolve(framePath))
+                .on('error', (err) => {
+                    console.error('Frame Extraction Error:', err.message)
+                    resolve('') // Resolve empty string on error to not break flow
+                })
+                .run()
+        })
+    }
+
+    /**
      * Concatenate multiple videos
      */
     async concatenateVideos(videoPaths: string[], outputPath: string): Promise<string> {
@@ -173,8 +198,16 @@ class VideoService {
 
                 await fs.writeFile(listFilePath, listContent)
 
+                // Normalize paths for FFmpeg CLI Input (List File needs forward slashes)
+                const safeListPath = listFilePath.replace(/\\/g, '/')
+
+                // Output Path: Use the raw system path provided (Node handles quoting usually)
+                // If it fails again, we might try safeOutputPath, but 'Invalid Argument' usually means folder missing.
+                // Reverting to `outputPath` as it was passed.
+                console.log(`[VideoService] Concatenating via list: ${safeListPath} -> ${outputPath}`)
+
                 ffmpeg()
-                    .input(listFilePath)
+                    .input(safeListPath)
                     .inputOptions(['-f concat', '-safe 0'])
                     .outputOptions(['-c copy'])
                     .output(outputPath)
@@ -202,6 +235,10 @@ class VideoService {
         const sceneVideos: string[] = []
 
         try {
+
+            // Ensure directories exist immediately before writing
+            await this.initDirs()
+
             // 1. Generate Scene Videos
             for (let i = 0; i < scenes.length; i++) {
                 const { imagePath, audioPath, text, subtitlePath, videoStartTime } = scenes[i]

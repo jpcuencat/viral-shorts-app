@@ -29,13 +29,12 @@ export async function generateScript(ideaId: string) {
       - Descripción: "${idea.description}"
       - Categoría: "${idea.categories?.name || 'General'}"
       
-      INSTRUCCIONES CRÍTICAS DE CONTENIDO:
-      1. PROHIBIDO usar marcadores de posición o corchetes como "[INSERTAR FECHA]", "[NOMBRE]", "[DATOS AQUÍ]".
-      2. DEBES completar todos los datos. Si la idea se refiere a una persona real (ej: "Messi", "Cristiano"), USA DATOS REALES Y VERÍDICOS.
-      3. Si la idea es genérica o ficticia, INVENTA nombres y situaciones realistas y coherentes para completar la historia. NUNCA dejes espacios en blanco.
-      4. El guion debe estar listo para leerse/grabarse tal cual.
-      5. Estructura de Loop (el final conecta con el inicio).
-      6. Todo el contenido debe ser en ESPAÑOL NEUTRO/LATINO.
+      INSTRUCCIONES CRÍTICAS DE TEXTO Y AUDIO:
+      1. PROHIBIDO usar marcadores de posición o corchetes. NADA DE "[NOMBRE]", "[FECHA]".
+      2. PROHIBIDO incluir "direcciones de escena" en el texto de audio. NADA DE "(Normal)", "(Gritando)", "(Susurrando)", "[Sonido]".
+      3. El campo 'hook_audio' y 'body_paragraphs' debe contener SOLO las palabras exactas que dirá la voz en off.
+      4. SIEMPRE rellena 'body_paragraphs' con al menos 2 párrafos sustanciales. No dejes el cuerpo vacío.
+      5. Genera texto COMPLETAMENTE TERMINADO y listo para ser leído por una IA.
 
       FORMATO JSON REQUERIDO:
       {
@@ -43,19 +42,19 @@ export async function generateScript(ideaId: string) {
         "seo_description": "Descripción para el algoritmo (max 150 chars)",
         "hashtags": ["#tag1", "#tag2", "#tag3"],
         "content": {
-           "hook_visual": "Descripción visual de los primeros 3s",
-           "hook_audio": "La primera frase que debes decir (Gritando/Susurrando/Normal)",
-           "hook_caption": "Texto corto para el video (max 5 palabras)",
+           "hook_visual": "Descripción visual de los primeros 3s (ej: Minecraft Parkour)",
+           "hook_audio": "Sabías que este bloque secreto puede romper el juego",
+           "hook_caption": "Bloque Secreto",
            "body_paragraphs": [
-              "Párrafo 1 del desarrollo...",
-              "Párrafo 2 del desarrollo..."
+              "La mayoría de jugadores nunca lo encuentran porque está...",
+              "Pero si cavas en coordenadas específicas durante la luna llena..."
            ],
            "body_captions": [
-              "Caption corto para el párrafo 1",
-              "Caption corto para el párrafo 2"
+              "Coordenadas Secretas",
+              "Luna Llena"
            ],
-           "cta": "Llamada a la acción final",
-           "cta_caption": "Texto final en pantalla"
+           "cta": "Suscríbete ahora para ver las coordenadas",
+           "cta_caption": "Suscríbete"
         },
         "estimated_duration": 55
       }
