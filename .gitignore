@@ -70,3 +70,6 @@ public/custom-videos/*
 public/ai-vault/*
 # binarios descargados
 /bin/
+
+# caché local de la CLI de Supabase
+supabase/.temp/

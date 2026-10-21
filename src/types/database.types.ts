@@ -225,7 +225,11 @@ export type Database = {
                     created_at: string
                     id: string
                     link: string | null
+                    news_item_title: string | null
+                    news_item_url: string | null
+                    picture_url: string | null
                     processed: boolean | null
+                    pub_date: string | null
                     source: string | null
                     title: string
                     traffic: string | null
@@ -235,7 +239,11 @@ export type Database = {
                     created_at?: string
                     id?: string
                     link?: string | null
+                    news_item_title?: string | null
+                    news_item_url?: string | null
+                    picture_url?: string | null
                     processed?: boolean | null
+                    pub_date?: string | null
                     source?: string | null
                     title: string
                     traffic?: string | null
@@ -245,7 +253,11 @@ export type Database = {
                     created_at?: string
                     id?: string
                     link?: string | null
+                    news_item_title?: string | null
+                    news_item_url?: string | null
+                    picture_url?: string | null
                     processed?: boolean | null
+                    pub_date?: string | null
                     source?: string | null
                     title?: string
                     traffic?: string | null

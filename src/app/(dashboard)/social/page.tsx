@@ -41,24 +41,14 @@ export default function SocialPublishingPage() {
     const [testingWebhook, setTestingWebhook] = useState(false)
     const [deleteInput, setDeleteInput] = useState('')
     const [deletingVideo, setDeletingVideo] = useState(false)
-    const [config, setConfig] = useState<SocialConfig>({
-        tiktokPostMode: 'DIRECT_POST',
-    })
-    const [youtubeStatus, setYoutubeStatus] = useState<{
-        hasClientSecret: boolean
-        isConnected: boolean
-    }>({ hasClientSecret: false, isConnected: false })
+    const [config, setConfig] = useState<SocialConfig>({})
     const [publications, setPublications] = useState<PublicationRecord[]>([])
 
     async function loadData() {
         setLoading(true)
         try {
             const data = await getSocialDashboardData()
-            setConfig({
-                tiktokPostMode: 'DIRECT_POST',
-                ...data.config,
-            })
-            setYoutubeStatus(data.youtubeStatus)
+            setConfig(data.config)
             setPublications(data.publications)
         } catch (err) {
             console.error(err)
@@ -77,7 +67,6 @@ export default function SocialPublishingPage() {
             const res = await saveSocialConfigAction(config)
             if (res.success) {
                 toast.success('Configuración de redes sociales guardada correctamente.')
-                if (res.youtubeStatus) setYoutubeStatus(res.youtubeStatus)
             } else {
                 toast.error(res.error || 'Error guardando configuración')
             }
@@ -149,7 +138,7 @@ export default function SocialPublishingPage() {
                         Automatización de Redes Sociales
                     </h1>
                     <p className="text-muted-foreground mt-1">
-                        Conecta tus cuentas de YouTube Shorts, TikTok, Instagram Reels o tu Webhook de Make/n8n para publicar y programar tus videos con un clic.
+                        Configura tu flujo de n8n, que publica y programa los videos en tus canales (YouTube y demás redes) con sus propias credenciales.
                     </p>
                 </div>
                 <Button
@@ -162,209 +151,12 @@ export default function SocialPublishingPage() {
                     ) : (
                         <Save className="h-4 w-4" />
                     )}
-                    Guardar Credenciales
+                    Guardar Configuración
                 </Button>
             </div>
 
-            <div className="grid gap-6 md:grid-cols-2">
-                {/* 1. YouTube Shorts */}
-                <Card>
-                    <CardHeader className="pb-3">
-                        <div className="flex items-center justify-between">
-                            <CardTitle className="text-base flex items-center gap-2">
-                                ▶️ YouTube Shorts (API Oficial v3)
-                            </CardTitle>
-                            <Badge
-                                variant={youtubeStatus.isConnected ? 'default' : 'outline'}
-                                className={
-                                    youtubeStatus.isConnected
-                                        ? 'bg-emerald-600 text-white'
-                                        : 'text-amber-600 border-amber-400'
-                                }
-                            >
-                                {youtubeStatus.isConnected ? 'Canal Conectado' : 'Sin Autorizar'}
-                            </Badge>
-                        </div>
-                        <CardDescription className="text-xs">
-                            Soporta subida directa en 9:16, etiquetas SEO y programación automática de fecha/hora (`publishAt`).
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                        <div className="space-y-1">
-                            <Label className="text-xs">Google OAuth Client ID</Label>
-                            <Input
-                                placeholder="Ej: 123456789-abc.apps.googleusercontent.com"
-                                value={config.youtubeClientId || ''}
-                                onChange={(e) =>
-                                    setConfig({ ...config, youtubeClientId: e.target.value })
-                                }
-                                className="text-xs"
-                            />
-                        </div>
-                        <div className="space-y-1">
-                            <Label className="text-xs">Google OAuth Client Secret</Label>
-                            <Input
-                                type="password"
-                                placeholder="GOCSPX-..."
-                                value={config.youtubeClientSecret || ''}
-                                onChange={(e) =>
-                                    setConfig({ ...config, youtubeClientSecret: e.target.value })
-                                }
-                                className="text-xs"
-                            />
-                        </div>
-                        <p className="text-[11px] text-muted-foreground">
-                            En Google Cloud Console agrega como URI de redirección autorizada:{' '}
-                            <code className="bg-muted px-1 py-0.5 rounded">
-                                http://localhost:3000/api/social/youtube/callback
-                            </code>
-                        </p>
-                        <div className="pt-1 flex gap-2">
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                className="w-full text-xs"
-                                asChild
-                            >
-                                <a href="/api/social/youtube/auth">
-                                    🔗 Autorizar Canal de YouTube con Google
-                                </a>
-                            </Button>
-                        </div>
-                    </CardContent>
-                </Card>
-
-                {/* 2. TikTok Content Posting API */}
-                <Card>
-                    <CardHeader className="pb-3">
-                        <div className="flex items-center justify-between">
-                            <CardTitle className="text-base flex items-center gap-2">
-                                🎵 TikTok (Content Posting API v2)
-                            </CardTitle>
-                            <Badge
-                                variant={config.tiktokAccessToken ? 'default' : 'outline'}
-                                className={
-                                    config.tiktokAccessToken
-                                        ? 'bg-emerald-600 text-white'
-                                        : 'text-muted-foreground'
-                                }
-                            >
-                                {config.tiktokAccessToken ? 'Configurado' : 'Opcional'}
-                            </Badge>
-                        </div>
-                        <CardDescription className="text-xs">
-                            Envía el MP4 directamente al feed de TikTok o como borrador a la bandeja de tu app móvil.
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                        <div className="space-y-1">
-                            <Label className="text-xs">TikTok OAuth Access Token</Label>
-                            <Input
-                                type="password"
-                                placeholder="act.123456789..."
-                                value={config.tiktokAccessToken || ''}
-                                onChange={(e) =>
-                                    setConfig({ ...config, tiktokAccessToken: e.target.value })
-                                }
-                                className="text-xs"
-                            />
-                        </div>
-                        <div className="space-y-1">
-                            <Label className="text-xs">Modo de Envío a TikTok</Label>
-                            <Select
-                                value={config.tiktokPostMode || 'DIRECT_POST'}
-                                onValueChange={(v) =>
-                                    setConfig({
-                                        ...config,
-                                        tiktokPostMode: v as 'DIRECT_POST' | 'MEDIA_UPLOAD',
-                                    })
-                                }
-                            >
-                                <SelectTrigger className="w-full h-9 text-xs">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="DIRECT_POST">
-                                        🚀 Publicar Directo en el Feed de TikTok
-                                    </SelectItem>
-                                    <SelectItem value="MEDIA_UPLOAD">
-                                        📱 Enviar a Bandeja de Entrada de mi App TikTok (Draft)
-                                    </SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
-                    </CardContent>
-                </Card>
-
-                {/* 3. Instagram Reels (Meta Graph API) */}
-                <Card>
-                    <CardHeader className="pb-3">
-                        <div className="flex items-center justify-between">
-                            <CardTitle className="text-base flex items-center gap-2">
-                                📸 Instagram Reels (Meta Graph API)
-                            </CardTitle>
-                            <Badge
-                                variant={
-                                    config.instagramUserId && config.instagramAccessToken
-                                        ? 'default'
-                                        : 'outline'
-                                }
-                                className={
-                                    config.instagramUserId && config.instagramAccessToken
-                                        ? 'bg-emerald-600 text-white'
-                                        : 'text-muted-foreground'
-                                }
-                            >
-                                {config.instagramUserId && config.instagramAccessToken
-                                    ? 'Configurado'
-                                    : 'Opcional'}
-                            </Badge>
-                        </div>
-                        <CardDescription className="text-xs">
-                            Publica directamente en cuentas de Instagram Profesional / Creator mediante contenedores REELS.
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                        <div className="space-y-1">
-                            <Label className="text-xs">Instagram Business / Creator User ID</Label>
-                            <Input
-                                placeholder="Ej: 17841400000000000"
-                                value={config.instagramUserId || ''}
-                                onChange={(e) =>
-                                    setConfig({ ...config, instagramUserId: e.target.value })
-                                }
-                                className="text-xs"
-                            />
-                        </div>
-                        <div className="space-y-1">
-                            <Label className="text-xs">Meta Graph Access Token</Label>
-                            <Input
-                                type="password"
-                                placeholder="EAAG..."
-                                value={config.instagramAccessToken || ''}
-                                onChange={(e) =>
-                                    setConfig({ ...config, instagramAccessToken: e.target.value })
-                                }
-                                className="text-xs"
-                            />
-                        </div>
-                        <div className="space-y-1">
-                            <Label className="text-xs">
-                                URL Pública Base (Requerido por Meta para leer el MP4)
-                            </Label>
-                            <Input
-                                placeholder="Ej: https://mi-tunel.ngrok-free.app"
-                                value={config.publicBaseUrl || ''}
-                                onChange={(e) =>
-                                    setConfig({ ...config, publicBaseUrl: e.target.value })
-                                }
-                                className="text-xs"
-                            />
-                        </div>
-                    </CardContent>
-                </Card>
-
-                {/* 4. Webhook Multi-Red (n8n / Make.com / Zapier) */}
+            <div className="grid gap-6">
+                {/* Webhook Multi-Red (n8n / Make.com / Zapier) */}
                 <Card className="border-emerald-500/30">
                     <CardHeader className="pb-3">
                         <div className="flex items-center justify-between">
@@ -455,7 +247,7 @@ export default function SocialPublishingPage() {
                         <code className="bg-muted px-1 py-0.5 rounded">
                             https://youtube.com/shorts/XXXXXXXXXXX
                         </code>{' '}
-                        o su ID de 11 letras) para eliminarlo de tu canal de YouTube a través de n8n o la API directa.
+                        o su ID de 11 letras) para eliminarlo de tu canal de YouTube a través de n8n.
                     </CardDescription>
                 </CardHeader>
                 <CardContent>

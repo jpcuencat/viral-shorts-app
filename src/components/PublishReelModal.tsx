@@ -68,20 +68,12 @@ export function PublishReelModal({
         defaultHashtags.length > 0 ? defaultHashtags.join(' ') : '#Shorts #Ecuador #Viral'
     )
 
-    const [selectedPlatforms, setSelectedPlatforms] = useState<SocialPlatform[]>(['youtube'])
+    const [selectedPlatforms, setSelectedPlatforms] = useState<SocialPlatform[]>(['webhook'])
     const [privacyStatus, setPrivacyStatus] = useState<'public' | 'unlisted' | 'private'>('public')
     const [scheduleMode, setScheduleMode] = useState<'now' | 'scheduled'>('now')
     const [scheduledDateTime, setScheduledDateTime] = useState<string>('')
 
-    const [statusInfo, setStatusInfo] = useState<{
-        youtubeConnected: boolean
-        tiktokConfigured: boolean
-        instagramConfigured: boolean
-        webhookConfigured: boolean
-    }>({
-        youtubeConnected: false,
-        tiktokConfigured: false,
-        instagramConfigured: false,
+    const [statusInfo, setStatusInfo] = useState<{ webhookConfigured: boolean }>({
         webhookConfigured: false,
     })
 
@@ -91,14 +83,7 @@ export function PublishReelModal({
     useEffect(() => {
         if (!open) return
         getSocialDashboardData().then((data) => {
-            setStatusInfo({
-                youtubeConnected: data.youtubeStatus.isConnected,
-                tiktokConfigured: Boolean(data.config.tiktokAccessToken),
-                instagramConfigured: Boolean(
-                    data.config.instagramUserId && data.config.instagramAccessToken
-                ),
-                webhookConfigured: Boolean(data.config.webhookUrl),
-            })
+            setStatusInfo({ webhookConfigured: Boolean(data.config.webhookUrl) })
         })
     }, [open])
 
@@ -163,7 +148,7 @@ export function PublishReelModal({
                 )
                 router.refresh()
             } else {
-                toast.error('Revisa la configuración de las credenciales de red social.')
+                toast.error('No se pudo enviar a n8n. Revisa la URL del webhook en Redes Sociales.')
             }
         } catch (err: any) {
             console.error(err)
@@ -180,32 +165,8 @@ export function PublishReelModal({
         ready: boolean
     }[] = [
         {
-            id: 'youtube',
-            name: '▶️ YouTube Shorts',
-            subtitle: statusInfo.youtubeConnected
-                ? 'Canal conectado y listo'
-                : 'Requiere autorizar canal en Redes',
-            ready: statusInfo.youtubeConnected,
-        },
-        {
-            id: 'tiktok',
-            name: '🎵 TikTok',
-            subtitle: statusInfo.tiktokConfigured
-                ? 'Content Posting API activa'
-                : 'Configura Access Token en Redes',
-            ready: statusInfo.tiktokConfigured,
-        },
-        {
-            id: 'instagram',
-            name: '📸 Instagram Reels',
-            subtitle: statusInfo.instagramConfigured
-                ? 'Meta Graph API activa'
-                : 'Configura IG User ID + Token',
-            ready: statusInfo.instagramConfigured,
-        },
-        {
             id: 'webhook',
-            name: '⚡ Webhook Multi-Red (n8n / Make)',
+            name: '⚡ n8n Multi-Red (YouTube y demás redes)',
             subtitle: statusInfo.webhookConfigured
                 ? 'Webhook listo para envío simultáneo'
                 : 'Configura URL de Webhook en Redes',
@@ -237,7 +198,7 @@ export function PublishReelModal({
                         </Button>
                     </DialogTitle>
                     <DialogDescription className="leading-relaxed">
-                        Publica inmediatamente o deja programado tu video 9:16 con metadatos SEO en YouTube Shorts, TikTok, Instagram Reels o vía Webhook Multi-Red.
+                        Publica inmediatamente o deja programado tu video 9:16 con metadatos SEO. El envío va a tu flujo de n8n, que lo publica en tus canales.
                     </DialogDescription>
                 </DialogHeader>
 

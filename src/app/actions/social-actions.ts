@@ -10,30 +10,22 @@ import {
     SocialPlatform,
     PublicationRecord,
 } from '@/services/social-publish-service'
-import { youtubeService } from '@/services/youtube-service'
 
 export async function getSocialDashboardData(): Promise<{
     config: SocialConfig
-    youtubeStatus: { hasClientSecret: boolean; isConnected: boolean }
     publications: PublicationRecord[]
 }> {
-    const config = socialPublishService.getConfig()
-    const youtubeStatus = youtubeService.getStatus()
-    const publications = socialPublishService.getPublications()
-
     return {
-        config,
-        youtubeStatus,
-        publications,
+        config: socialPublishService.getConfig(),
+        publications: socialPublishService.getPublications(),
     }
 }
 
 export async function saveSocialConfigAction(newConfig: Partial<SocialConfig>) {
     try {
         const saved = socialPublishService.saveConfig(newConfig)
-        const youtubeStatus = youtubeService.getStatus()
         revalidatePath('/social')
-        return { success: true, config: saved, youtubeStatus }
+        return { success: true, config: saved }
     } catch (error: any) {
         return { success: false, error: error.message || 'No se pudo guardar la configuración' }
     }
@@ -46,7 +38,7 @@ export async function publishReelToSocialsAction(params: {
     title: string
     description: string
     hashtags: string[]
-    platforms: SocialPlatform[]
+    platforms?: SocialPlatform[]
     privacyStatus?: 'public' | 'unlisted' | 'private'
     scheduledAt?: string
 }) {
@@ -55,13 +47,10 @@ export async function publishReelToSocialsAction(params: {
     const res = await socialPublishService.publishReel(params)
 
     if (res.success) {
-        const updatePayload: Record<string, any> = {
-            status: 'published',
-        }
-        if (res.youtubeId) {
-            updatePayload.youtube_id = res.youtubeId
-        }
-        await supabase.from('reels').update(updatePayload).eq('id', params.reelId)
+        await supabase
+            .from('reels')
+            .update({ status: params.scheduledAt ? 'scheduled' : 'published' })
+            .eq('id', params.reelId)
     }
 
     revalidatePath(`/scripts/${params.scriptId}`)

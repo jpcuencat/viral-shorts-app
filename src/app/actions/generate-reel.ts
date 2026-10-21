@@ -8,7 +8,6 @@ import { audioService } from '@/services/audio-service'
 import { model, generateJson } from '@/lib/ai/gemini'
 import { SceneVisualPlanListSchema, QualityAuditSchema, type QualityAudit } from '@/lib/ai/schemas'
 import { subtitleService } from '@/services/subtitle-service'
-import { youtubeService } from '@/services/youtube-service'
 import fs from 'fs'
 import path from 'path'
 
