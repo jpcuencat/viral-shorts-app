@@ -1,7 +1,7 @@
 import ffmpeg from 'fluent-ffmpeg'
 import path from 'path'
 import fs from 'fs/promises'
-import { v4 as uuidv4 } from 'uuid'
+import { randomUUID as uuidv4 } from 'crypto'
 
 import { FFMPEG_PATH, FFPROBE_PATH, SUBTITLE_FONT_FILE, MUSIC_VOLUME, TARGET_LUFS, escapeFilterPath } from '@/lib/media-config'
 

@@ -1,6 +1,6 @@
 import fs from 'fs'
 import path from 'path'
-import { v4 as uuidv4 } from 'uuid'
+import { randomUUID as uuidv4 } from 'crypto'
 import { WordBoundaryCue } from './audio-service'
 
 export class SubtitleService {

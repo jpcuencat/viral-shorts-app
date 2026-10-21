@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import path from 'path'
 import fs from 'fs/promises'
-import { v4 as uuidv4 } from 'uuid'
+import { randomUUID as uuidv4 } from 'crypto'
 import { createClient } from '@/lib/supabase/server'
 
 const MAX_UPLOAD_MB = Number(process.env.UPLOAD_MAX_MB || 500)

@@ -2,12 +2,10 @@
 const { EdgeTTS } = require('node-edge-tts')
 // @ts-ignore
 const drm = require('node-edge-tts/dist/drm')
-// @ts-ignore
-const gTTS = require('gtts')
 import crypto from 'crypto'
 import path from 'path'
 import fs from 'fs'
-import { v4 as uuidv4 } from 'uuid'
+import { randomUUID as uuidv4 } from 'crypto'
 
 export interface WordBoundaryCue {
     part: string
@@ -116,20 +114,6 @@ class AudioService {
         return wavPath
     }
 
-    private generateFallbackGtts(text: string, lang: string, filepath: string): Promise<string> {
-        return new Promise((resolve, reject) => {
-            try {
-                const gtts = new gTTS(text, lang)
-                gtts.save(filepath, (err: any) => {
-                    if (err) return reject(err)
-                    resolve(filepath)
-                })
-            } catch (err) {
-                reject(err)
-            }
-        })
-    }
-
     /**
      * Generates neural voiceover and returns both the audio path and exact word-boundary timestamps (when available)
      */
@@ -189,9 +173,7 @@ class AudioService {
             const wavPath = await this.generateGeminiTTS(text, filepath)
             return { audioPath: wavPath, wordCues: [] }
         } catch (geminiErr: any) {
-            console.warn(`[AudioService] Gemini TTS fallback failed (${geminiErr?.message}), using gTTS...`)
-            const gttsPath = await this.generateFallbackGtts(text, lang, filepath)
-            return { audioPath: gttsPath, wordCues: [] }
+            throw new Error(`No se pudo generar la voz: Edge TTS y Gemini TTS fallaron (${geminiErr?.message || geminiErr}).`)
         }
     }
 }

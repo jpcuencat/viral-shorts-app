@@ -4,7 +4,7 @@ import fs from 'fs/promises'
 import fsSync from 'fs'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { v4 as uuidv4 } from 'uuid'
+import { randomUUID as uuidv4 } from 'crypto'
 import { generateJson } from '@/lib/ai/gemini'
 import { ClipRelevanceSchema } from '@/lib/ai/schemas'
 
