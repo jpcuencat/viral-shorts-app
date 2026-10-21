@@ -14,11 +14,11 @@ export function RefreshTrendsButton() {
         setLoading(true)
         try {
             const result = await processTrends()
-            alert(`Processed ${result.processed} trends. Created ${result.created} new viral scripts!`)
+            alert(`✅ Se analizaron ${result.processed} tendencias de Ecuador y se crearon ${result.created} nuevos guiones virales (${result.trendCategory || 'Tendencias'}).`)
             router.refresh()
         } catch (e) {
             console.error(e)
-            alert('Error processing trends')
+            alert('Error procesando las tendencias en vivo')
         } finally {
             setLoading(false)
         }

@@ -1,0 +1,113 @@
+{
+  "name": "RealsAI - Publicar y Eliminar Shorts en YouTube / Multi-Red",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "realsai-publish",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "1. Webhook RealsAI (Recibe MP4 o Delete)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "webhookId": "realsai-publish"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-delete",
+              "leftValue": "={{ $json.body.action }}",
+              "rightValue": "delete",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-delete-or-publish",
+      "name": "2. ¿Es Eliminar o Publicar?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "delete",
+        "videoId": "={{ $json.body.youtubeVideoId }}"
+      },
+      "id": "youtube-delete",
+      "name": "3A. Eliminar Short de YouTube",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [740, 140]
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "={{ $('1. Webhook RealsAI (Recibe MP4 o Delete)').item.json.body.title }} #Shorts",
+        "regionCode": "EC",
+        "categoryId": "24",
+        "binaryData": true,
+        "binaryPropertyName": "data",
+        "options": {
+          "description": "={{ $('1. Webhook RealsAI (Recibe MP4 o Delete)').item.json.body.captionWithHashtags }}",
+          "privacyStatus": "={{ $('1. Webhook RealsAI (Recibe MP4 o Delete)').item.json.body.privacyStatus || 'public' }}",
+          "selfDeclaredMadeForKids": false,
+          "tags": "={{ $('1. Webhook RealsAI (Recibe MP4 o Delete)').item.json.body.hashtagsText || 'Shorts,Ecuador,Viral' }}"
+        }
+      },
+      "id": "youtube-upload",
+      "name": "3B. Subir Short a YouTube",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [740, 380]
+    }
+  ],
+  "connections": {
+    "1. Webhook RealsAI (Recibe MP4 o Delete)": {
+      "main": [
+        [
+          {
+            "node": "2. ¿Es Eliminar o Publicar?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. ¿Es Eliminar o Publicar?": {
+      "main": [
+        [
+          {
+            "node": "3A. Eliminar Short de YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "3B. Subir Short a YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

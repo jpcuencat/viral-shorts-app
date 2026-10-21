@@ -10,14 +10,16 @@ import Link from 'next/link'
 import { ReelPlayer } from '@/components/ReelPlayer'
 import { GenerateReelButton } from '@/components/GenerateReelButton'
 import { ScriptActions } from '@/components/ScriptActions'
+import { FollowUpFlowModal } from '@/components/FollowUpFlowModal'
+import { SceneEditorModal } from '@/components/SceneEditorModal'
+import { PublishReelModal } from '@/components/PublishReelModal'
+
+export const dynamic = 'force-dynamic'
 
 export default async function ScriptPage({ params, searchParams }: { params: Promise<{ id: string }>, searchParams: Promise<{ tab?: string }> }) {
     const { id } = await params
     const { tab } = await searchParams
     const supabase = await createClient()
-
-    // Fetch script ... (rest is same)
-
 
     // Fetch script joined with idea and reels
     const { data: script } = await supabase
@@ -49,11 +51,14 @@ export default async function ScriptPage({ params, searchParams }: { params: Pro
         }
     }
 
-    const reel = script.reels?.[0] || null
+    const sortedReels = Array.isArray(script.reels)
+        ? [...script.reels].sort((a: any, b: any) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+        : []
+    const reel = sortedReels[0] || null
 
     return (
         <div className="max-w-6xl mx-auto space-y-8 pb-12">
-            <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center gap-4">
                 <Button variant="ghost" size="icon" asChild>
                     <Link href={`/ideas/${script.idea_id}`}>
                         <ArrowLeft className="h-4 w-4" />
@@ -63,8 +68,14 @@ export default async function ScriptPage({ params, searchParams }: { params: Pro
                     <h1 className="text-2xl font-bold tracking-tight">Script Editor</h1>
                     <p className="text-muted-foreground text-sm font-medium">{script.ideas?.title}</p>
                 </div>
-                <div className="ml-auto flex gap-2">
-                    <GenerateReelButton scriptId={id} />
+                <div className="ml-auto flex flex-wrap gap-2">
+                    <FollowUpFlowModal
+                        sourceIdeaId={script.idea_id}
+                        sourceIdeaTitle={script.ideas?.title}
+                        variant="outline"
+                        buttonLabel="Crear Seguimiento"
+                    />
+                    <GenerateReelButton scriptId={id} ideaTitle={script.ideas?.title} />
                     <ScriptActions
                         content={content}
                         metadata={{
@@ -142,7 +153,15 @@ export default async function ScriptPage({ params, searchParams }: { params: Pro
                                                 Turn this script into a visual sequence with one click.
                                             </p>
                                         </div>
-                                        <GenerateReelButton scriptId={id} />
+                                        <div className="flex flex-wrap items-center justify-center gap-3">
+                                            <GenerateReelButton scriptId={id} ideaTitle={script.ideas?.title} />
+                                            <FollowUpFlowModal
+                                                sourceIdeaId={script.idea_id}
+                                                sourceIdeaTitle={script.ideas?.title}
+                                                variant="outline"
+                                                buttonLabel="Crear Seguimiento (Parte 2)"
+                                            />
+                                        </div>
                                     </CardContent>
                                 </Card>
                             ) : (
@@ -155,11 +174,22 @@ export default async function ScriptPage({ params, searchParams }: { params: Pro
                                         }}
                                     />
                                     <div className="text-center">
-                                        <Badge variant={reel.status === 'completed' ? 'default' : 'outline'}>
+                                        <Badge variant={reel.status === 'completed' || reel.status === 'published' ? 'default' : 'outline'}>
                                             Status: {reel.status}
                                         </Badge>
                                     </div>
-                                    <div className="flex justify-center gap-4 p-4">
+                                    <div className="flex flex-wrap justify-center gap-2.5 p-4">
+                                        {reel.export_url && (
+                                            <PublishReelModal
+                                                reelId={reel.id}
+                                                scriptId={id}
+                                                videoUrl={reel.export_url}
+                                                defaultTitle={script.seo_title || script.ideas?.title || 'Viral Short'}
+                                                defaultDescription={script.seo_description || script.ideas?.description || ''}
+                                                defaultHashtags={script.hashtags || content?.hashtags || ['#Shorts', '#Ecuador', '#Viral']}
+                                                youtubeId={reel.youtube_id}
+                                            />
+                                        )}
                                         {reel.export_url && (
                                             <Button variant="outline" asChild>
                                                 <a href={reel.export_url} download target="_blank">
@@ -168,7 +198,14 @@ export default async function ScriptPage({ params, searchParams }: { params: Pro
                                                 </a>
                                             </Button>
                                         )}
-                                        <GenerateReelButton scriptId={id} />
+                                        <SceneEditorModal reelId={reel.id} scriptId={id} />
+                                        <GenerateReelButton scriptId={id} ideaTitle={script.ideas?.title} />
+                                        <FollowUpFlowModal
+                                            sourceIdeaId={script.idea_id}
+                                            sourceIdeaTitle={script.ideas?.title}
+                                            variant="secondary"
+                                            buttonLabel="Crear Seguimiento (Parte 2)"
+                                        />
                                     </div>
                                 </div>
                             )}

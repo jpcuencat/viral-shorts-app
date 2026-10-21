@@ -32,6 +32,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -58,3 +59,14 @@ ffmpeg/
 # temp scripts
 test-*.js
 inspect-*.js
+
+# respaldos locales
+.backup-fase1/
+public/custom-videos/*
+
+# configuración local con tokens de redes y registro de publicaciones
+/data/
+# caché de medios generados/descargados (pesado y con material de terceros)
+public/ai-vault/*
+# binarios descargados
+/bin/

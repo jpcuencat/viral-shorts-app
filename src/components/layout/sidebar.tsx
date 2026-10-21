@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { Menu, Lightbulb, Grid, PlusCircle, Settings, LogOut, LayoutDashboard } from 'lucide-react'
+import { Menu, Lightbulb, Grid, PlusCircle, Settings, LogOut, LayoutDashboard, Share2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { useState, useEffect } from 'react'
@@ -37,7 +37,7 @@ export function Sidebar({ className }: SidebarProps) {
             label: 'Dashboard',
             icon: LayoutDashboard,
             href: '/dashboard',
-            isActive: pathname === '/dashboard' || pathname === '/ideas',
+            isActive: pathname === '/dashboard',
         },
         {
             label: 'Ideas Library',
@@ -59,9 +59,15 @@ export function Sidebar({ className }: SidebarProps) {
         },
         {
             label: 'Categories',
-            icon: Grid, // Or another icon
+            icon: Grid,
             href: '/categories',
             isActive: pathname === '/categories',
+        },
+        {
+            label: 'Redes & Auto-Post',
+            icon: Share2,
+            href: '/social',
+            isActive: pathname === '/social',
         },
     ]
 

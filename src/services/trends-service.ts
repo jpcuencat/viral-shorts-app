@@ -1,99 +1,86 @@
-
-type TrendItem = {
-    title: string;
-    traffic: string;
-    description: string;
-    pubDate: string;
-    link: string;
-}
-
-const SERPAPI_KEY = process.env.SERPAPI_KEY || '';
+import {
+    getCategoryNewsTrends,
+    getDailyTrends,
+    getGoogleTrendsRSS,
+    getSocialMediaViralNews,
+    getXTwitterTrends,
+    TrendItem,
+} from '@/lib/trends';
 
 class TrendsService {
-    // 24 Hour Cache to save credits (Limit 250/mo ~ 8/day)
-    // We strictly cache because 250 is low.
-    private cache: { [geo: string]: { data: TrendItem[], timestamp: number } } = {};
-    private CACHE_TTL = 1000 * 60 * 60 * 24;
+    private cache: { [key: string]: { data: TrendItem[], timestamp: number } } = {};
+    private CACHE_TTL = 1000 * 60 * 20; // 20 minutes cache
 
     /**
-     * Fetch Daily Trending Searches via SerpApi
-     * @param geo Country code (US, ES, GB, etc.)
+     * Fetch live trends:
+     * - If category is 'OPEN_TRENDS' or starts with 'Tendencias', fetches unrestricted global + social trends (X, TikTok/IG, Reddit, Google Trends, Top News)
+     * - Otherwise blends specific category news with top social/global trends
      */
-    async getDailyTrends(geo: string = 'ES'): Promise<TrendItem[]> {
-        // Check Cache
-        const cached = this.cache[geo];
+    async getDailyTrends(geo: string = 'EC', category?: string): Promise<TrendItem[]> {
+        const isOpenTrendMode = !category || category === 'OPEN_TRENDS' || category.toLowerCase().startsWith('tendencias');
+        const cacheKey = `${geo}_${isOpenTrendMode ? 'OPEN' : category}`;
+        const cached = this.cache[cacheKey];
         if (cached && (Date.now() - cached.timestamp < this.CACHE_TTL)) {
-            console.log(`[TrendsService] Returning cached trends for ${geo}`);
             return cached.data;
         }
 
         try {
-            console.log(`[TrendsService] Fetching SerpApi trends for ${geo}...`);
+            let merged: TrendItem[] = [];
 
-            // Map 2-letter ISO to SerpApi "geo" parameter if needed, 
-            // but SerpApi usually takes 2-letter codes for 'google_trends' engine?
-            // Actually 'google_trends' engine parameters: 
-            // - engine=google_trends
-            // - q (query) or date/geo?
-            // Daily Trends: engine=google_trends_trending_daily, geo=ES
-
-            const params = new URLSearchParams({
-                engine: 'google_trends_trending_daily',
-                geo: geo,
-                api_key: SERPAPI_KEY
-            });
-
-            const response = await fetch(`https://serpapi.com/search.json?${params.toString()}`);
-            const data = await response.json();
-
-            if (data.error) {
-                console.error('[TrendsService] SerpApi Error:', data.error);
-                return [];
+            if (isOpenTrendMode) {
+                merged = await getDailyTrends(geo);
+            } else {
+                const [categoryNews, socialViral, xTrends, googleTrends] = await Promise.all([
+                    getCategoryNewsTrends(category!, 6),
+                    getSocialMediaViralNews(3),
+                    getXTwitterTrends('ecuador', 4),
+                    getGoogleTrendsRSS(geo),
+                ]);
+                merged = [
+                    ...categoryNews,
+                    ...xTrends,
+                    ...googleTrends.slice(0, 4),
+                    ...socialViral,
+                ];
             }
 
-            // Parse SerpApi Response (Daily Trends)
-            // Structure: daily_searches: [ { query: "Real Madrid", formatted_traffic: "100K+", ... } ]
-            const rawTrends = data.daily_searches?.[0]?.searches || [];
-
-            const trends: TrendItem[] = rawTrends.map((item: any) => ({
-                title: item.query,
-                traffic: item.formatted_traffic || 'N/A',
-                description: item.articles?.[0]?.title || '', // Use first article title as desc
-                pubDate: item.articles?.[0]?.time_ago || new Date().toISOString(),
-                link: item.articles?.[0]?.link || ''
-            }));
-
-            // Update Cache
-            this.cache[geo] = {
-                data: trends,
-                timestamp: Date.now()
+            this.cache[cacheKey] = {
+                data: merged,
+                timestamp: Date.now(),
             };
 
-            return trends;
-
+            return merged;
         } catch (error) {
-            console.error(`[TrendsService] Failed to fetch trends:`, error);
+            console.error('[TrendsService] Failed to fetch live trends:', error);
             return [];
         }
     }
 
     /**
-     * Get a formatted string of top trends for prompt injection
+     * Get a formatted string of top live trends & social phenomena for prompt injection
      */
-    async getTrendsContext(geo: string = 'ES', limit: number = 5): Promise<string> {
-        const trends = await this.getDailyTrends(geo);
+    async getTrendsContext(geo: string = 'EC', limit: number = 14, category?: string): Promise<string> {
+        const trends = await this.getDailyTrends(geo, category);
 
         if (trends.length === 0) {
-            return `Current Trending Topics (Fallback):
-- AI Technology
-- Viral Challenges
-- Netflix Series
-- Football/Soccer
-- Tech News`;
+            return '';
         }
 
-        const topTrends = trends.slice(0, limit).map(t => `- ${t.title} (${t.traffic})`).join('\n');
-        return `Current Trending Topics in ${geo}:\n${topTrends}`;
+        const sourceLabels: Record<string, string> = {
+            x_twitter: 'X / Twitter Ecuador',
+            social_viral: 'Viral TikTok/IG/Redes',
+            google_trends: 'Google Trends Ecuador',
+            google_news: 'Noticia Impacto 24h (Ecuador/Mundo)',
+            reddit_viral: 'Reddit Viral',
+            hacker_news: 'Tech Viral',
+        };
+
+        const topTrends = trends
+            .slice(0, limit)
+            .map(t => `- [${sourceLabels[t.source || 'google_trends'] || 'Tendencia'}] "${t.title}" (${t.traffic})`)
+            .join('\n');
+
+        return `TENDENCIAS EN TIEMPO REAL EN ECUADOR Y EL MUNDO (X/Twitter Ecuador, Google Trends EC, Noticias Ecuador 24h, TikTok/IG y Global):\n${topTrends}`;
     }
 }
 

@@ -108,6 +108,7 @@ export function ReelPlayer({ scenes, quality }: ReelPlayerProps) {
                     if (isVideo) {
                         return (
                             <video
+                                key={url}
                                 src={url}
                                 className="absolute inset-0 w-full h-full object-cover z-0"
                                 autoPlay

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { ChevronLeft, Edit2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { IdeaActions } from '@/components/ideas/idea-actions'
+import { FollowUpFlowModal } from '@/components/FollowUpFlowModal'
 
 export default async function IdeaDetailsPage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = await params
@@ -22,13 +23,13 @@ export default async function IdeaDetailsPage({ params }: { params: Promise<{ id
 
     return (
         <div className="max-w-4xl mx-auto space-y-8">
-            <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center gap-4">
                 <Button variant="ghost" size="icon" asChild>
                     <Link href="/ideas">
                         <ChevronLeft className="h-4 w-4" />
                     </Link>
                 </Button>
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                     <h1 className="text-2xl font-bold tracking-tight">{idea.title}</h1>
                     <div className="flex items-center gap-2 mt-2">
                         {idea.categories?.name && (
@@ -39,6 +40,12 @@ export default async function IdeaDetailsPage({ params }: { params: Promise<{ id
                         </Badge>
                     </div>
                 </div>
+                <FollowUpFlowModal
+                    sourceIdeaId={idea.id}
+                    sourceIdeaTitle={idea.title}
+                    variant="outline"
+                    buttonLabel="Crear Seguimiento (Parte 2)"
+                />
             </div>
 
             <div className="grid gap-8 md:grid-cols-[2fr_1fr]">

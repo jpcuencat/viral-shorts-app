@@ -2,14 +2,14 @@
 
 import React, { createContext, useContext, useState, ReactNode, useCallback } from 'react'
 import { toast } from 'sonner'
-import { generateReel } from '@/app/actions/generate-reel'
+import { generateReel, GenerateReelOptions } from '@/app/actions/generate-reel'
 import { useRouter } from 'next/navigation'
 
 interface GenerationContextType {
     isGenerating: boolean
     progress: number
     activeIdeaTitle: string | null
-    startGeneration: (scriptId: string, title?: string) => Promise<void>
+    startGeneration: (scriptId: string, title?: string, options?: GenerateReelOptions) => Promise<void>
 }
 
 const GenerationContext = createContext<GenerationContextType | undefined>(undefined)
@@ -20,18 +20,24 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
     const [activeIdeaTitle, setActiveIdeaTitle] = useState<string | null>(null)
     const router = useRouter()
 
-    const startGeneration = useCallback(async (scriptId: string, title: string = 'Reel') => {
+    const startGeneration = useCallback(async (scriptId: string, title: string = 'Reel', options?: GenerateReelOptions) => {
         if (isGenerating) return
 
         setIsGenerating(true)
         setActiveIdeaTitle(title)
         setProgress(10)
 
-        toast.info(`Starting generation for: ${title}`, {
-            description: "You can continue navigating. We'll notify you when it's done."
+        const modeLabel =
+            options?.visualMode === 'real_video'
+                ? '100% Video en Movimiento Real'
+                : options?.visualMode === 'ai_images'
+                    ? '100% Storyboard IA (SD3)'
+                    : 'Híbrido (Video Real + IA SD3)'
+
+        toast.info(`Generando Reel (${modeLabel}): ${title}`, {
+            description: "Todo lo generado se guardará en tu Bóveda (public/ai-vault) para reutilizarse."
         })
 
-        // Simulate progress for UX since we don't have real stream yet
         const interval = setInterval(() => {
             setProgress((prev) => {
                 if (prev >= 90) return prev
@@ -40,39 +46,37 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
         }, 800)
 
         try {
-            const result = await generateReel(scriptId)
+            const result = await generateReel(scriptId, options)
 
             clearInterval(interval)
             setProgress(100)
 
             if (result.success) {
-                toast.success("Reel Generated Successfully!", {
-                    description: `${title} is ready to view.`,
+                toast.success("¡Reel Generado con Éxito!", {
+                    description: `${title} está listo para reproducirse.`,
                     action: {
-                        label: "View Reel",
+                        label: "Ver Reel",
                         onClick: () => window.location.href = `/scripts/${scriptId}`
                     }
                 })
             } else {
-                toast.error("Generation Failed", {
-                    description: result.error || "Unknown error occurred."
+                toast.error("Error en la generación", {
+                    description: result.error || "Ocurrió un error desconocido."
                 })
             }
         } catch (error) {
             clearInterval(interval)
-            toast.error("Generation Error", {
-                description: "Something went wrong."
+            toast.error("Error de Generación", {
+                description: "Revisa la consola del servidor para más detalles."
             })
             console.error(error)
         } finally {
-            // Keep the success state visible for a moment
             setTimeout(() => {
                 setIsGenerating(false)
                 setProgress(0)
                 setActiveIdeaTitle(null)
             }, 2000)
 
-            // Refresh data
             router.refresh()
         }
     }, [isGenerating, router])

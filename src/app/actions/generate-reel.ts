@@ -3,22 +3,124 @@
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { videoService } from '@/services/video-service'
-import { imageService } from '@/services/image-service'
+import { imageService, VisualGenerationMode } from '@/services/image-service'
 import { audioService } from '@/services/audio-service'
-import { model } from '@/lib/ai/gemini'
+import { model, generateJson } from '@/lib/ai/gemini'
+import { SceneVisualPlanListSchema, QualityAuditSchema, type QualityAudit } from '@/lib/ai/schemas'
 import { subtitleService } from '@/services/subtitle-service'
 import { youtubeService } from '@/services/youtube-service'
 import fs from 'fs'
 import path from 'path'
 
-export async function generateReel(scriptId: string) {
+export interface GenerateReelOptions {
+    visualMode?: VisualGenerationMode
+    customVideoSource?: string
+    voiceId?: string
+}
+
+export interface SceneManifestEntry {
+    sceneIndex: number
+    text: string
+    caption: string
+    audioPath: string
+    imagePath: string
+    publicMediaUrl: string
+    subtitlePath: string
+    videoStartTime: number
+    duration: number
+    subjectKey: string
+    sceneTags: string[]
+    hfPrompt: string
+    ytSearchQuery: string
+    sourceLabel: string
+}
+
+const MAX_AUDIT_FRAMES = 8
+
+interface AuditScene {
+    text: string
+    sourceLabel: string
+    duration: number
+}
+
+/**
+ * Auditoría visual con Gemini sobre frames reales del video final.
+ * Muestrea TODAS las escenas (hasta MAX_AUDIT_FRAMES, repartidas uniformemente).
+ * Devuelve null si la auditoría no pudo ejecutarse: nunca inventa una puntuación.
+ */
+async function auditReelQuality(
+    videoUrl: string,
+    scenes: AuditScene[],
+    ideaTitle: string
+): Promise<QualityAudit | null> {
+    if (scenes.length === 0) return null
+    const finalVideoDiskPath = path.join(process.cwd(), 'public', videoUrl.replace(/^\//, ''))
+
+    // Inicio de cada escena en la línea de tiempo del video final
+    const starts: number[] = []
+    let acc = 0
+    for (const sc of scenes) {
+        starts.push(acc)
+        acc += sc.duration || 4
+    }
+
+    const step = Math.max(1, Math.ceil(scenes.length / MAX_AUDIT_FRAMES))
+    const sampled = scenes.map((_, i) => i).filter(i => i % step === 0)
+
+    const promptParts: any[] = [
+        `Actúa como un Director de Arte y Crítico Experto en YouTube Shorts / TikTok (Canal: Radar 593).
+Se adjuntan frames extraídos del video final vertical 9:16 (1080x1920), con subtítulos tipo karaoke incrustados.
+El video tiene ${scenes.length} escenas; se muestran ${sampled.length}.
+
+CRITERIOS (0 a 100 puntos, sé estricto y honesto; NO infles la nota):
+1. FORMATO Y COMPOSICIÓN (30 pts): nitidez, encuadre vertical, sin bandas negras ni deformaciones.
+2. SUBTÍTULOS Y LEGIBILIDAD (35 pts): legibles, bien contrastados, sin tapar el sujeto.
+3. COHERENCIA VISUAL CON EL TEMA "${ideaTitle}" (35 pts): el visual corresponde a la narración de esa escena; penaliza imágenes genéricas, anatomía distorsionada, texto ilegible o protagonistas equivocados.
+
+En "weakestSceneIndex" pon el ÍNDICE ORIGINAL de escena (el número indicado en cada frame) peor evaluado, y en "improvedVisualPrompt" un prompt en inglés para regenerarla.`
+    ]
+
+    for (const idx of sampled) {
+        const scene = scenes[idx]
+        const t = starts[idx] + Math.min(1.5, (scene.duration || 3) * 0.45)
+        promptParts.push(`\n--- ESCENA índice ${idx} (t=${t.toFixed(1)}s) ---\nNarración: "${scene.text}"\nFuente visual: "${scene.sourceLabel}"\nFrame:`)
+        const framePath = await videoService.extractFrame(finalVideoDiskPath, t)
+        if (framePath && fs.existsSync(framePath)) {
+            promptParts.push({ inlineData: { data: fs.readFileSync(framePath).toString('base64'), mimeType: 'image/jpeg' } })
+            try { fs.unlinkSync(framePath) } catch { }
+        } else {
+            promptParts.push('[No se pudo extraer el frame de esta escena]')
+        }
+    }
+
+    promptParts.push(`\nResponde SOLO con JSON: {"score": <0-100>, "weakestSceneIndex": <int>, "improvedVisualPrompt": "<english prompt>", "feedback": "<2-3 frases en español>"}`)
+
+    try {
+        const audit = await generateJson(promptParts, QualityAuditSchema, { label: 'QualityAudit' })
+        audit.weakestSceneIndex = Math.min(Math.max(0, audit.weakestSceneIndex), scenes.length - 1)
+        audit.score = Math.round(audit.score)
+        return audit
+    } catch (err) {
+        console.error('[QualityAudit] No se pudo auditar el reel:', err)
+        return null
+    }
+}
+
+const QUALITY_HEAL_THRESHOLD = 80
+
+export async function generateReel(scriptId: string, options: GenerateReelOptions = {}) {
+    const {
+        visualMode = 'ai_images',
+        customVideoSource = '',
+        voiceId = 'es-EC-LuisNeural'
+    } = options
     const supabase = await createClient()
 
     try {
-        // 1. Fetch Script
+        // 1. Fetch Script with Idea & Category
         const { data: script, error: fetchError } = await supabase
             .from('scripts')
-            .select('*, ideas(title)')
+            .select('*, ideas(title, description, categories(name))')
             .eq('id', scriptId)
             .single()
 
@@ -28,10 +130,21 @@ export async function generateReel(scriptId: string) {
         let content: any = script.content
         if (typeof content === 'string') content = JSON.parse(content)
 
-        // 3. Create/Reset Reel Record
-        // ... (Existing logic to find/create reel)
-        const { data: existingReel } = await supabase.from('reels').select('id').eq('script_id', scriptId).single()
-        let reelId = existingReel?.id
+        // 3. Create/Reset Reel Record (handle duplicates safely so UI always updates the active reel)
+        const { data: existingReels } = await supabase
+            .from('reels')
+            .select('id, created_at')
+            .eq('script_id', scriptId)
+            .order('created_at', { ascending: false })
+
+        let reelId = existingReels?.[0]?.id
+
+        // If duplicate reel rows existed from previous runs, clean up older ones
+        if (existingReels && existingReels.length > 1) {
+            const duplicateIds = existingReels.slice(1).map(r => r.id)
+            await supabase.from('reel_scenes').delete().in('reel_id', duplicateIds)
+            await supabase.from('reels').delete().in('id', duplicateIds)
+        }
 
         if (!reelId) {
             const { data: newReel, error: createError } = await supabase
@@ -56,53 +169,93 @@ export async function generateReel(scriptId: string) {
             console.log('[ReelGen] Starting Local Generation Pipeline...')
             if (!content) throw new Error('Script content is missing or invalid')
 
-            const ideaContext = `${script.ideas?.title || ''}, ${script.ideas?.description || ''}`.slice(0, 100)
+            const ideaTitle = script.ideas?.title || ''
+            const ideaDesc = script.ideas?.description || ''
+            const ideaCategory = (script.ideas?.categories?.name || '').toLowerCase()
+            const ideaContext = `${ideaTitle}, ${ideaDesc}`.slice(0, 120)
 
-            // Define Scences to generate
-            const scenesData = []
+            // Helper: Split overly long sentences (> 18 words) at natural clause boundaries so visuals change every 3.5-5 seconds
+            const splitIntoVisualBeats = (rawText: string): string[] => {
+                const words = rawText.trim().split(/\s+/)
+                if (words.length <= 18) return [rawText.trim()]
+
+                const clauses = rawText.split(/(?<=[,;:])\s+|\s+(?=mientras\b|pero\b|aunque\b|olvidando\b|donde\b|porque\b)/i)
+                const beats: string[] = []
+                let current = ''
+
+                for (const clause of clauses) {
+                    const candidate = current ? `${current} ${clause.trim()}` : clause.trim()
+                    if (candidate.split(/\s+/).length > 16 && current.split(/\s+/).length >= 6) {
+                        beats.push(current.trim())
+                        current = clause.trim()
+                    } else {
+                        current = candidate
+                    }
+                }
+                if (current.trim()) {
+                    if (beats.length > 0 && current.trim().split(/\s+/).length < 5) {
+                        beats[beats.length - 1] += ` ${current.trim()}`
+                    } else {
+                        beats.push(current.trim())
+                    }
+                }
+                return beats.length > 0 ? beats : [rawText.trim()]
+            }
+
+            // Define Scenes to generate
+            const scenesData: { text: string; visual: string; caption: string }[] = []
 
             // 1. HOOK
-            scenesData.push({
-                text: content.hook_audio || content.hook || `${script.ideas?.title}`,
-                visual: content.hook_visual || `Cinematic shot of ${script.ideas?.title}`,
-                caption: content.hook_caption || (content.hook_audio || '').slice(0, 30) // Use caption or truncate audio
+            const hookBeats = splitIntoVisualBeats(content.hook_audio || content.hook || `${ideaTitle}`)
+            hookBeats.forEach((beat, idx) => {
+                scenesData.push({
+                    text: beat,
+                    visual: idx === 0 && content.hook_visual ? content.hook_visual : `Action shot of ${ideaTitle}: ${beat}`,
+                    caption: content.hook_caption || beat.split(' ').slice(0, 3).join(' ')
+                })
             })
 
-            // 2. BODY (Iterate all paragraphs)
+            // 2. BODY (Iterate all paragraphs and split long sentences into 4s visual beats)
+            const scriptSceneVisuals: string[] = Array.isArray(content.scene_visuals) ? content.scene_visuals : []
+            let bodyVisualIdx = 0
+
             if (content.body_paragraphs && Array.isArray(content.body_paragraphs)) {
-                content.body_paragraphs.forEach((para: string, index: number) => {
-                    // SPLIT PARAGRAPH INTO SENTENCES
-                    // Regex looks for (. ! ?) followed by space or end of string
+                content.body_paragraphs.forEach((para: string) => {
                     const sentences = para.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [para]
 
-                    sentences.forEach((sentence, subIndex) => {
+                    sentences.forEach((sentence) => {
                         const cleanSentence = sentence.trim()
-                        if (cleanSentence.length > 5) { // Skip empty/tiny fragments
-                            scenesData.push({
-                                text: cleanSentence,
-                                visual: `Scene ${index + 1}.${subIndex + 1} of ${script.ideas?.title}`,
-                                caption: cleanSentence.split(' ').slice(0, 3).join(' ') // Short summary
+                        if (cleanSentence.length > 5) {
+                            const beats = splitIntoVisualBeats(cleanSentence)
+                            beats.forEach((beat) => {
+                                const preplannedVisual = scriptSceneVisuals[bodyVisualIdx] || ''
+                                bodyVisualIdx++
+                                scenesData.push({
+                                    text: beat,
+                                    visual: preplannedVisual || `Action scene for "${beat}" featuring ${ideaTitle}`,
+                                    caption: beat.split(' ').slice(0, 3).join(' ')
+                                })
                             })
                         }
                     })
                 })
             } else {
                 scenesData.push({
-                    text: 'Content body',
-                    visual: `Visual about ${script.ideas?.title}`,
-                    caption: script.ideas?.title
+                    text: ideaDesc || ideaTitle,
+                    visual: `Action visual about ${ideaTitle}`,
+                    caption: ideaTitle
                 })
             }
 
             // 3. CTA
             scenesData.push({
-                text: content.cta || 'Follow for more',
-                visual: content.cta_visual || `Conclusion of ${script.ideas?.title}`,
-                caption: content.cta_caption || 'Follow for more'
+                text: content.cta || 'Sígueme para más contenido',
+                visual: content.cta_visual || `Epic final shot of ${ideaTitle}`,
+                caption: content.cta_caption || 'Sígueme para más'
             })
 
             // Helper for Retry Logic
-            const retryOperation = async (fn: () => Promise<string>, retries = 3, delay = 2000): Promise<string> => {
+            const retryOperation = async (fn: () => Promise<string>, retries = 2, delay = 2000): Promise<string> => {
                 try {
                     return await fn()
                 } catch (error) {
@@ -113,257 +266,280 @@ export async function generateReel(scriptId: string) {
                 }
             }
 
-            // 4.1 Check for Background Videos
-            const bgDir = path.join(process.cwd(), 'public', 'backgrounds')
+            // 4.1 100% AI STORYBOARD DIRECTOR + SMART AI VAULT (public/ai-vault)
+            // Generic local background videos (public/backgrounds) are completely disabled so they never distort the story.
+            // Every generated image is indexed and saved in public/ai-vault/ to be reused automatically when a future video shares the same subject & scene tags!
+            interface SceneVisualPlan {
+                subject_key: string
+                scene_tags: string[]
+                yt_search_query: string
+                hf_prompt: string
+            }
+            let visualPlans: SceneVisualPlan[] = []
+            const defaultSubjectKey = (content.protagonist_en || ideaTitle).slice(0, 35)
 
-            // Ensure dir exists
-            if (!fs.existsSync(bgDir)) fs.mkdirSync(bgDir, { recursive: true })
+            try {
+                const protagonistHint = content.protagonist_en || ideaTitle
+                const plannerPrompt = `You are a Master Storyboard Director for a viral Short.
+TOPIC TITLE: "${ideaTitle}"
+TOPIC DESCRIPTION: "${ideaDesc}"
+PROTAGONIST / MAIN SUBJECT: "${protagonistHint}"
+CATEGORY: "${ideaCategory}"
 
-            // Get ALL available background files
-            const backgroundFiles = fs.readdirSync(bgDir).filter(f => f.endsWith('.mp4'))
-            console.log(`[ReelGen] Found ${backgroundFiles.length} background videos available for dynamic switching.`)
+CRITICAL STORYBOARD RULES (READ CAREFULLY):
+1. PROTAGONIST & SUBJECT CONTINUITY: Every single "hf_prompt" and "yt_search_query" MUST explicitly name and show the MAIN SUBJECT / PROTAGONIST in action!
+   - STRICTLY FORBIDDEN: NEVER generate symbolic/metaphorical objects that break the story!
+2. ANATOMICALLY-SAFE FRAMING FOR ALL TOPICS (NO DISTORTED BODIES OR HANDS):
+   - Every "hf_prompt" MUST use clean waist-up medium portraits, over-the-shoulder broadcast angles, clear environmental/architectural views, or composed single-subject editorial shots.
+   - NEVER ask for tangled multi-body collisions, mid-air acrobatics, macro close-ups of hands/fingers/feet, or readable text on screens (as diffusion models distort those).
+3. SMART VAULT INDEXING:
+   - "subject_key": A short, consistent 1-3 word English identifier for the main subject of this video (e.g. "cne_ecuador", "lionel_messi", "openai_chatgpt", "quito_ecuador"). Use the SAME "subject_key" across all scenes of this video so our AI Vault groups them under this topic.
+   - "scene_tags": Array of 4 specific English keywords describing the exact pose/action/setting of THIS scene.
+   - "yt_search_query": A specific 4-6 word English YouTube search query to find real motion footage of this exact scene.
 
-            const processedScenes = []
+For each of the ${scenesData.length} scenes below, output a JSON array of ${scenesData.length} objects:
+- "subject_key": string (consistent main subject slug).
+- "scene_tags": array of 4 specific English action/setting tags.
+- "yt_search_query": specific English YouTube search query for real motion video.
+- "hf_prompt": Clean, anatomically-safe English prompt for Stable Diffusion 3 (vertical 9:16, waist-up medium shot or editorial angle, photorealistic, cinematic lighting, no text, no tangled limbs) showing the MAIN PROTAGONIST or subject of that line.
+
+SCENES:
+${scenesData.map((s, idx) => `${idx + 1}. Narration: "${s.text}" | Visual hint: "${s.visual}"`).join('\n')}
+
+Respond ONLY with a valid JSON array.`
+                const parsedPlans = await generateJson(plannerPrompt, SceneVisualPlanListSchema, { label: 'StoryboardPlanner' })
+                if (parsedPlans.length === scenesData.length) {
+                    visualPlans = parsedPlans
+                    console.log(`[ReelGen] AI Storyboard Director planned ${visualPlans.length} scenes (mode: ${visualMode}).`)
+                }
+            } catch (planErr: any) {
+                console.warn(`[ReelGen] Visual planner fallback (${planErr.message})`)
+            }
+
+            const usedVaultFiles = new Set<string>()
+            interface ProcessedScene {
+                audioPath: string
+                imagePath: string
+                publicMediaUrl: string
+                subtitlePath: string
+                videoStartTime: number
+                duration: number
+                sceneData: { text: string; visual: string; caption: string }
+                imageUrl: string
+                subjectKey: string
+                sceneTags: string[]
+                hfPrompt: string
+                ytSearchQuery: string
+                category: string
+            }
+            const processedScenes: ProcessedScene[] = []
 
             for (let i = 0; i < scenesData.length; i++) {
                 const scene = scenesData[i]
-
-                // A. Generate Audio
-                console.log(`[ReelGen] Generating Audio for scene ${i + 1}...`)
-                const audioPath = await audioService.generateAudio(scene.text, 'es')
-
-                // A.1 Generate Subtitles (Dynamic SRT)
-                const duration = await videoService.getAudioDuration(audioPath)
-                const subtitlePath = await subtitleService.generateSRT(scene.text, duration)
-
-                let imagePath = ''
-                // Default to 0, will be randomized if video is used
-                let sceneVideoStartTime = 0
-                let imageUrl = ''
-
-                // DYNAMIC BACKGROUND LOGIC:
-                // If we have gameplay videos, pick a RANDOM one for EACH scene.
-                // This creates the "Fast Paced / Dynamic" effect (Minecraft -> GTA -> Parkour)
-                if (backgroundFiles.length > 0) {
-                    const randomFile = backgroundFiles[Math.floor(Math.random() * backgroundFiles.length)]
-
-                    imagePath = path.join(bgDir, randomFile)
-                    // Random start time between 0 and 60s (or more if clips are longer)
-                    // Since we stream_loop, safe to pick any start.
-                    sceneVideoStartTime = Math.floor(Math.random() * 60)
-
-                    imageUrl = `Gameplay: ${randomFile}`
-                    console.log(`[ReelGen] Scene ${i + 1}: Using Verified Gameplay ${randomFile} at ${sceneVideoStartTime}s`)
-
-                } else {
-                    // B. AI GENERATION (Pollinations) - FALLBACK if no videos exist
-                    console.log(`[ReelGen] Generando Imagen IA for scene ${i + 1}...`)
-
-                    const basePrompt = (scene.visual || '').replace(/[^\w\s]/gi, '')
-                    const enhancedPrompt = `Hyper-realistic photo of ${basePrompt}, context: ${ideaContext}, 8k, dramatic lighting, detailed, vertical ratio`
-                    const seed = Math.floor(Math.random() * 999999)
-                    imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(enhancedPrompt)}?width=1080&height=1920&model=flux&nologo=true&seed=${seed}`
-
-                    try {
-                        imagePath = await retryOperation(() => imageService.downloadImage(imageUrl))
-                    } catch (imgError) {
-                        console.error(`[ReelGen] Pollinations Failed after retries. Using Contextual Fallback.`)
-
-                        // FALLBACK: Use Keyword-based stock photo (more relevant than random picsum)
-                        // Using loremflickr with keywords from title
-                        const keyword = script.ideas?.title.split(' ')[0] || 'business'
-                        const fallbackUrl = `https://loremflickr.com/1080/1920/${encodeURIComponent(keyword)}?lock=${seed}`
-
-                        console.log(`[ReelGen] Using Fallback URL: ${fallbackUrl}`)
-                        imagePath = await imageService.downloadImage(fallbackUrl)
-                    }
+                const plan = visualPlans[i] || {
+                    subject_key: defaultSubjectKey,
+                    scene_tags: [ideaCategory || 'viral', `scene_${i + 1}`],
+                    yt_search_query: `${content.protagonist_en || ideaTitle} ${scene.visual}`.slice(0, 60),
+                    hf_prompt: `Vertical 9:16 photorealistic action shot of ${content.protagonist_en || ideaTitle}: ${scene.visual}, dramatic lighting, 8k, no text`
                 }
+
+                // A. Generate Audio + WordBoundary Timestamps (with selected voiceId, e.g. es-EC-LuisNeural)
+                console.log(`[ReelGen] Generating Audio (${voiceId}) & Word Cues for scene ${i + 1}/${scenesData.length}...`)
+                const { audioPath, wordCues } = await audioService.generateAudioWithSubtitles(scene.text, 'es', voiceId)
+
+                // A.1 Generate ASS Karaoke Subtitles (Dynamic active-word highlight, zero overlap)
+                const duration = await videoService.getAudioDuration(audioPath)
+                const subtitlePath = await subtitleService.generateSRT(scene.text, duration, wordCues)
+
+                // B. SMART AI & VIDEO VAULT: Supports 'hybrid', 'real_video' (YouTube B-Roll / Custom Video), and 'ai_images' (HuggingFace SD3)
+                const enhancedPrompt = `${plan.hf_prompt}, vertical 9:16 aspect ratio, ultra-detailed action photography, cinematic lighting, photorealistic 8k, high contrast, no text, no letters, no watermark`
+
+                const vaultResult = await imageService.generateOrGetFromVault({
+                    prompt: enhancedPrompt,
+                    videoSearchQuery: plan.yt_search_query,
+                    visualMode,
+                    customVideoSource: customVideoSource.trim() || undefined,
+                    sceneIndex: i,
+                    durationSec: duration,
+                    category: ideaCategory || 'general',
+                    subjectKey: plan.subject_key || defaultSubjectKey,
+                    sceneTags: plan.scene_tags || [],
+                    usedFiles: usedVaultFiles
+                })
+
+                const imagePath = vaultResult.imagePath
+                const imageUrl = vaultResult.sourceLabel
+                const sceneVideoStartTime = vaultResult.videoStartTime || 0
+
+                const publicDir = path.join(process.cwd(), 'public')
+                const relMedia = imagePath.startsWith(publicDir)
+                    ? '/' + path.relative(publicDir, imagePath).replace(/\\/g, '/')
+                    : imageUrl
 
                 processedScenes.push({
                     audioPath,
                     imagePath,
+                    publicMediaUrl: relMedia,
                     subtitlePath,
                     videoStartTime: sceneVideoStartTime,
+                    duration,
                     sceneData: scene,
-                    imageUrl: imageUrl
+                    imageUrl: imageUrl,
+                    subjectKey: plan.subject_key || defaultSubjectKey,
+                    sceneTags: plan.scene_tags || [],
+                    hfPrompt: plan.hf_prompt,
+                    ytSearchQuery: plan.yt_search_query,
+                    category: ideaCategory || 'general'
                 })
             }
 
             // 5. VIDEO ASSEMBLY (FFmpeg)
             console.log('[ReelGen] Stitching Video...')
-            // output url relative to public/
-            const videoUrl = await videoService.generateVideo(
+            let videoUrl = await videoService.generateVideo(
                 processedScenes.map(s => ({
                     imagePath: s.imagePath,
                     audioPath: s.audioPath,
                     text: s.sceneData.caption || s.sceneData.text.slice(0, 30),
                     subtitlePath: s.subtitlePath,
-                    videoStartTime: s.videoStartTime
-                }))
+                    videoStartTime: s.videoStartTime,
+                    duration: s.duration
+                })),
+                { reelId }
             )
 
             console.log('[ReelGen] Video Created:', videoUrl)
 
-
-            // 6. AI QUALITY AUDIT (CRITIC)
-            console.log('[ReelGen] Running AI Quality Audit...')
-            let qualityScore = 0
-            let qualityFeedback = ''
-
-            try {
-                // Prepare context for Gemini Vision
-                // We pick random 2 frames (images) to audit to save tokens/latency
-                const auditScenes = processedScenes.slice(0, 2)
-
-                const promptParts: any[] = [
-                    `Actúa como un crítico de video experto en VIRAL SHORTS y TIKTOK.
-                     
-                     MUESTRAS DEL VIDEO GENERADO:
-                     (Se adjuntan frames visuales y el texto correspondiente)
-
-                     CRITERIOS DE EVALUACIÓN (Adaptables al Estilo):
-                     
-                     1. ESTILO "BRAINROT" / GAMEPLAY (Minecraft, GTA, Parkour):
-                        - Si ves videojuegos de fondo, NO penalices la falta de relación semántica con el texto. Es intencional.
-                        - Evalúa: ¿El video es HD? ¿Se ve fluido? ¿Hay subtítulos o texto legible?
-                        - Si cumple esto, la puntuación visual debe ser ALTA (80-100).
-                     
-                     2. ESTILO "ILLUSTRATIVE" (Imágenes IA):
-                        - Si son imágenes estáticas generadas, SÍ evalúa que coincidan con el texto.
-                        - Si el texto dice "gato" y ves un "perro", penaliza.
-
-                     Tu objetivo es predecir el POTENCIAL VIRAL (Retention Score).
-                    `
-                ]
-
-                for (const scene of auditScenes) {
-                    promptParts.push(`\n--- ESCENA ---\nTexto: "${scene.sceneData.text}"\nImagen Generada: `)
-
-                    let imagePathToAudit = scene.imagePath
-
-                    // If video, extract a frame first
-                    if (scene.imagePath.endsWith('.mp4')) {
-                        console.log(`[ReelGen] Extracting frame from video for audit: ${scene.imagePath}`)
-                        const framePath = await videoService.extractFrame(scene.imagePath)
-                        if (framePath) imagePathToAudit = framePath
-                    }
-
-                    // Read Image as Base64 (ignoring if still mp4/failed)
-                    if (imagePathToAudit && !imagePathToAudit.endsWith('.mp4')) {
-                        const imageBuffer = fs.readFileSync(imagePathToAudit)
-                        const base64Image = imageBuffer.toString('base64')
-
-                        promptParts.push({
-                            inlineData: {
-                                data: base64Image,
-                                mimeType: "image/jpeg"
-                            }
-                        })
-                    } else {
-                        promptParts.push('[NO SE PUDO EXTRAER IMAGEN DEL VIDEO]')
-                    }
-                }
-
-                promptParts.push(`\n
-                    EVALUACIÓN REQUERIDA (JSON):
-                    {
-                        "score": 85,
-                        "feedback": "La imagen X coincide perfectamente..."
-                    }
-                    Responde SOLO con el JSON.
-                `)
-
-                const result = await model.generateContent(promptParts)
-                const response = result.response.text()
-                const cleanedJson = response.replace(/```json/g, '').replace(/```/g, '').trim()
-                const auditData = JSON.parse(cleanedJson)
-
-                qualityScore = auditData.score || 50
-                qualityFeedback = auditData.feedback || 'Sin feedback detallado.'
-
-                console.log(`[ReelGen] AI Audit Score: ${qualityScore}/100`)
-
-            } catch (auditError) {
-                console.error('[ReelGen] Audit Failed:', auditError)
-                qualityScore = 50 // Default neutral score on error
-                qualityFeedback = 'Error en auditoría automática.'
-            }
-
-
-            // 7. SAVE METADATA & AUDIT RESULTS
-            // -------------------------------------------------------------------------
-            // 7. Auto-Publish (Viral Mode)
-            // -------------------------------------------------------------------------
-            let youtubeId = null
-            let status = 'completed' // default to manual review
-
-            // Check if idea is viral enough (> 90) and service is ready
-            // NOTE: The original code uses `script.ideas` and `content` for data.
-            // The provided snippet uses `selectedIdea` and `finalVideoPath`, `ideaId`, `category`.
-            // Assuming `selectedIdea` refers to `script.ideas` and `finalVideoPath` refers to `videoUrl`.
-            // `ideaId` would be `script.ideas.id` and `category` would need to be derived or passed.
-            // For now, I'll use the variables available in the current scope (`script.ideas`, `videoUrl`, `reelId`).
-            // If `script.ideas` doesn't have `ai_metadata` or `viral_score`, this part might need further adjustment.
-            const viralScore = script.ideas?.ai_metadata?.viral_score || 0
-
-            if (viralScore > 90) {
-                console.log(`[Auto-Publish] Viral Score ${viralScore} > 90. Attempting upload...`)
+            const writeSceneManifest = () => {
                 try {
-                    // Assuming youtubeService is available and uploadVideo takes (videoPath, title, description, tags)
-                    // And assuming script.ideas.title and script.ideas.description are available.
-                    // Category might need to be determined from script.ideas or content.
-                    const publishedId = await youtubeService.uploadVideo(
-                        videoUrl, // Using videoUrl as finalVideoPath
-                        script.ideas?.title || 'Generated Reel',
-                        script.ideas?.description || '',
-                        ['shorts', 'viral', 'ai', script.ideas?.category || 'general'] // Using script.ideas.category if available
-                    )
-
-                    if (publishedId) {
-                        youtubeId = publishedId
-                        status = 'published'
-                        console.log(`[Auto-Publish] Success! Video ID: ${publishedId}`)
-                    }
-                } catch (uploadError) {
-                    console.error('[Auto-Publish] Failed:', uploadError)
-                    // Don't fail the generation, just stay as 'completed'
+                    const outputDir = path.join(process.cwd(), 'public', 'output')
+                    fs.mkdirSync(outputDir, { recursive: true })
+                    const manifestPath = path.join(process.cwd(), 'public', 'output', `manifest_${reelId}.json`)
+                    const manifestEntries: SceneManifestEntry[] = processedScenes.map((s, idx) => ({
+                        sceneIndex: idx,
+                        text: s.sceneData.text,
+                        caption: s.sceneData.caption,
+                        audioPath: s.audioPath,
+                        imagePath: s.imagePath,
+                        publicMediaUrl: s.publicMediaUrl,
+                        subtitlePath: s.subtitlePath,
+                        videoStartTime: s.videoStartTime,
+                        duration: s.duration,
+                        subjectKey: s.subjectKey,
+                        sceneTags: s.sceneTags,
+                        hfPrompt: s.hfPrompt,
+                        ytSearchQuery: s.ytSearchQuery,
+                        sourceLabel: s.imageUrl
+                    }))
+                    fs.writeFileSync(manifestPath, JSON.stringify(manifestEntries, null, 2), 'utf-8')
+                } catch (manifestErr) {
+                    console.warn('[ReelGen] Could not write scene manifest:', manifestErr)
                 }
             }
+            writeSceneManifest()
 
-            // Update Reel with the final video URL AND Score
+            // 6. AUDITORÍA DE CALIDAD (honesta) + AUTO-CORRECCIÓN DE LA ESCENA MÁS DÉBIL
+            const toAuditScenes = (): AuditScene[] => processedScenes.map(s => ({
+                text: s.sceneData.text,
+                sourceLabel: s.imageUrl,
+                duration: s.duration
+            }))
+
+            let qualityScore: number | null = null
+            let qualityFeedback: string | null = null
+
+            const firstAudit = await auditReelQuality(videoUrl, toAuditScenes(), ideaTitle)
+            if (firstAudit) {
+                qualityScore = firstAudit.score
+                qualityFeedback = firstAudit.feedback
+                console.log(`[ReelGen] Auditoría inicial: ${qualityScore}/100`)
+
+                if (qualityScore < QUALITY_HEAL_THRESHOLD && processedScenes.length > 0) {
+                    const weakIdx = firstAudit.weakestSceneIndex
+                    const targetScene = processedScenes[weakIdx]
+                    const healedPrompt =
+                        firstAudit.improvedVisualPrompt ||
+                        `Vertical 9:16 photorealistic editorial shot of ${content.protagonist_en || ideaTitle}: ${targetScene.sceneData.text}, dramatic studio lighting, no text`
+
+                    console.log(`[ReelGen] ${qualityScore} < ${QUALITY_HEAL_THRESHOLD}: regenerando escena ${weakIdx + 1}...`)
+                    try {
+                        const healedVault = await imageService.generateOrGetFromVault({
+                            prompt: `${healedPrompt}, vertical 9:16 aspect ratio, ultra-detailed editorial photography, cinematic lighting, photorealistic, high contrast, no text`,
+                            visualMode: 'ai_images',
+                            sceneIndex: weakIdx + 10,
+                            durationSec: targetScene.duration,
+                            category: targetScene.category,
+                            subjectKey: targetScene.subjectKey,
+                            sceneTags: [`healed_${Date.now().toString().slice(-4)}`],
+                            usedFiles: usedVaultFiles
+                        })
+
+                        const publicDir = path.join(process.cwd(), 'public')
+                        processedScenes[weakIdx] = {
+                            ...targetScene,
+                            imagePath: healedVault.imagePath,
+                            publicMediaUrl: healedVault.imagePath.startsWith(publicDir)
+                                ? '/' + path.relative(publicDir, healedVault.imagePath).replace(/\\/g, '/')
+                                : healedVault.sourceLabel,
+                            imageUrl: healedVault.sourceLabel,
+                            hfPrompt: healedPrompt,
+                            videoStartTime: 0
+                        }
+
+                        videoUrl = await videoService.generateVideo(
+                            processedScenes.map(s => ({
+                                imagePath: s.imagePath,
+                                audioPath: s.audioPath,
+                                text: s.sceneData.caption || s.sceneData.text.slice(0, 30),
+                                subtitlePath: s.subtitlePath,
+                                videoStartTime: s.videoStartTime,
+                                duration: s.duration
+                            })),
+                            { reelId, onlySceneIndex: weakIdx }
+                        )
+                        writeSceneManifest()
+
+                        const reAudit = await auditReelQuality(videoUrl, toAuditScenes(), ideaTitle)
+                        if (reAudit) {
+                            qualityFeedback = `${reAudit.feedback} (Escena ${weakIdx + 1} regenerada automáticamente; nota previa ${qualityScore}/100.)`
+                            qualityScore = reAudit.score
+                        } else {
+                            qualityFeedback = `${qualityFeedback} (Escena ${weakIdx + 1} regenerada; la re-auditoría falló, se conserva la nota previa.)`
+                        }
+                    } catch (healErr) {
+                        console.warn('[ReelGen] No se pudo auto-corregir la escena:', healErr)
+                    }
+                }
+                console.log(`[ReelGen] Nota final de auditoría: ${qualityScore}/100`)
+            } else {
+                qualityFeedback = 'Auditoría IA no disponible para este reel (sin puntuación).'
+            }
+
+            // 7. SAVE METADATA & AUDIT RESULTS (Publishing is now explicitly controlled via the Social Publisher Modal / Auto-Publish settings)
             await supabase.from('reels').update({
-                status: status, // Use the determined status ('completed' or 'published')
+                status: 'completed',
                 export_url: videoUrl,
                 quality_score: qualityScore,
-                quality_feedback: qualityFeedback,
-                youtube_id: youtubeId // Save YouTube ID if published
+                quality_feedback: qualityFeedback
             }).eq('id', reelId)
 
-
-            // Insert Scenes for record (optional, but good for UI if we keep Scene player)
-            // Let's Insert ONE scene with the full video URL so the existing Player picks it up as "Video".
             await supabase.from('reel_scenes').insert({
                 reel_id: reelId,
                 scene_order: 1,
                 content_text: 'Full Generated Reel',
-                image_url: videoUrl, // It's a video path /output/..., Player handles <video>
-                duration: 15 // Estimated
+                image_url: videoUrl,
+                duration: Number(processedScenes.reduce((sum, sc) => sum + (sc.duration || 0), 0).toFixed(2))
             })
 
-            return { success: true, reelId, qualityScore }
-
+            revalidatePath(`/scripts/${scriptId}`)
+            return { success: true, reelId, qualityScore, videoUrl }
 
         } catch (genError: any) {
             console.error('Generation Pipeline Failed:', genError)
             throw genError
         }
 
-        revalidatePath(`/scripts/${scriptId}`)
-        return { success: true, reelId }
-
     } catch (error: any) {
         console.error('Error generating reel:', error)
-        // Reset status on error
         const { data: existingReel } = await supabase.from('reels').select('id').eq('script_id', scriptId).single()
         if (existingReel) {
             await supabase.from('reels').update({ status: 'failed' }).eq('id', existingReel.id)
@@ -371,3 +547,153 @@ export async function generateReel(scriptId: string) {
         return { success: false, error: error.message }
     }
 }
+
+/**
+ * Returns the saved scene breakdown manifest for a generated Reel so the user can inspect or replace individual scenes.
+ */
+export async function getReelSceneManifest(reelId: string): Promise<SceneManifestEntry[]> {
+    try {
+        const manifestPath = path.join(process.cwd(), 'public', 'output', `manifest_${reelId}.json`)
+        if (!fs.existsSync(manifestPath)) return []
+        return JSON.parse(fs.readFileSync(manifestPath, 'utf-8'))
+    } catch {
+        return []
+    }
+}
+
+/**
+ * Replaces a SINGLE scene's visual (with either a new AI image or a real motion clip) and re-stitches the Reel in seconds!
+ */
+export async function replaceSingleReelScene(
+    reelId: string,
+    scriptId: string,
+    sceneIndex: number,
+    options: {
+        visualMode: 'ai_images' | 'real_video'
+        customPromptOrQuery?: string
+    }
+): Promise<{ success: boolean; videoUrl?: string; error?: string }> {
+    const supabase = await createClient()
+    const manifestPath = path.join(process.cwd(), 'public', 'output', `manifest_${reelId}.json`)
+
+    if (!fs.existsSync(manifestPath)) {
+        return {
+            success: false,
+            error: 'Este Reel fue creado antes de activar el editor de escenas. Regenera el Reel una vez para habilitar la edición por escena.'
+        }
+    }
+
+    try {
+        const manifest: SceneManifestEntry[] = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'))
+        const target = manifest[sceneIndex]
+        if (!target) {
+            return { success: false, error: 'Escena no encontrada.' }
+        }
+
+        const cleanSubjectName = (target.subjectKey || 'protagonist').replace(/_/g, ' ')
+        const customText = options.customPromptOrQuery?.trim()
+
+        // Never reuse the old distorted prompt when replacing a scene:
+        // build a clean, anatomically-safe editorial/broadcast shot matching any topic or protagonist!
+        let freshEnglishPrompt = customText
+            ? `${customText}, featuring ${cleanSubjectName}, waist-up medium editorial shot or clean wide establishing frame, natural anatomy, vertical 9:16 aspect ratio, ultra-detailed editorial photography, dramatic broadcast lighting, photorealistic 8k, no text`
+            : `Waist-up medium editorial broadcast shot of ${cleanSubjectName}, expressive posture and authentic setting matching "${target.text}", vertical 9:16 aspect ratio, ultra-detailed photography, dramatic cinematic lighting, photorealistic 8k, no text, no deformed limbs`
+
+        try {
+            const instructionContext = customText
+                ? `User instruction: "${customText}". Scene narration: "${target.text}".`
+                : `Scene narration: "${target.text}".`
+            const translateRes = await model.generateContent(
+                `Create a clean, anatomically-safe English photography prompt (waist-up medium shot, close-up portrait, or clean wide architectural/scenic shot — NEVER tangled limbs, extra legs, or chaotic multi-person collisions) for a vertical 9:16 video scene featuring subject "${cleanSubjectName}". ${instructionContext} Respond ONLY with the single English prompt sentence.`
+            )
+            const translated = translateRes.response.text().trim().replace(/^"|"$/g, '')
+            if (translated.length > 10) {
+                freshEnglishPrompt = `${translated}, vertical 9:16 aspect ratio, photorealistic 8k editorial photography, natural anatomy, no text`
+            }
+        } catch {}
+
+        const prompt = freshEnglishPrompt
+        const videoQuery = customText || target.ytSearchQuery
+
+        // Exclude all currently used files in the manifest so it forces a brand new visual!
+        const usedFiles = new Set<string>(manifest.map(m => path.basename(m.imagePath)))
+
+        const vaultResult = await imageService.generateOrGetFromVault({
+            prompt,
+            videoSearchQuery: videoQuery,
+            visualMode: options.visualMode,
+            sceneIndex: sceneIndex + Math.floor(Math.random() * 5) + 1,
+            durationSec: target.duration,
+            category: 'general',
+            subjectKey: target.subjectKey,
+            sceneTags: [`replaced_${Date.now()}_${Math.floor(Math.random() * 999)}`],
+            usedFiles
+        })
+
+        const publicDir = path.join(process.cwd(), 'public')
+        const relMedia = vaultResult.imagePath.startsWith(publicDir)
+            ? '/' + path.relative(publicDir, vaultResult.imagePath).replace(/\\/g, '/')
+            : vaultResult.sourceLabel
+
+        manifest[sceneIndex] = {
+            ...target,
+            imagePath: vaultResult.imagePath,
+            publicMediaUrl: relMedia,
+            videoStartTime: vaultResult.videoStartTime || 0,
+            sourceLabel: vaultResult.sourceLabel,
+            hfPrompt: freshEnglishPrompt,
+            ytSearchQuery: videoQuery
+        }
+
+        // Re-stitch the video with FFmpeg: ONLY re-renders `sceneIndex` and keeps all other scenes untouched!
+        const newVideoUrl = await videoService.generateVideo(
+            manifest.map(s => ({
+                imagePath: s.imagePath,
+                audioPath: s.audioPath,
+                text: s.caption || s.text.slice(0, 30),
+                subtitlePath: s.subtitlePath,
+                videoStartTime: s.videoStartTime,
+                duration: s.duration
+            })),
+            { reelId, onlySceneIndex: sceneIndex }
+        )
+
+        fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf-8')
+
+        const { data: scriptRow } = await supabase
+            .from('scripts')
+            .select('ideas(title)')
+            .eq('id', scriptId)
+            .maybeSingle()
+        const auditTitle = (scriptRow as any)?.ideas?.title || cleanSubjectName
+        const audit = await auditReelQuality(
+            newVideoUrl,
+            manifest.map(m => ({ text: m.text, sourceLabel: m.sourceLabel, duration: m.duration })),
+            auditTitle
+        )
+
+        await supabase
+            .from('reels')
+            .update({
+                export_url: newVideoUrl,
+                status: 'completed',
+                quality_score: audit ? audit.score : null,
+                quality_feedback: audit
+                    ? `${audit.feedback} (Tras reemplazar la escena ${sceneIndex + 1}.)`
+                    : `Escena ${sceneIndex + 1} reemplazada; auditoría IA no disponible (sin puntuación).`
+            })
+            .eq('id', reelId)
+
+        await supabase
+            .from('reel_scenes')
+            .update({ image_url: newVideoUrl })
+            .eq('reel_id', reelId)
+
+        revalidatePath(`/scripts/${scriptId}`)
+        return { success: true, videoUrl: newVideoUrl }
+    } catch (err: any) {
+        console.error('[ReplaceScene] Error:', err)
+        return { success: false, error: err.message || 'No se pudo reemplazar la escena.' }
+    }
+}
+

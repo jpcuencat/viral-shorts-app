@@ -97,35 +97,59 @@ export default async function DashboardPage() {
                     </div>
 
                     <div className="grid gap-4 md:grid-cols-3">
-                        {/* We will fetch trends here */}
-                        {(await supabase.from('trends').select('*').order('created_at', { ascending: false }).limit(3)).data?.map((trend: any) => (
-                            <Card key={trend.id} className="bg-gradient-to-br from-red-50 to-white border-red-100">
-                                <CardHeader className="pb-2">
-                                    <CardTitle className="text-sm font-medium line-clamp-2 leading-tight">
-                                        <Link href={trend.link || '#'} target="_blank" className="hover:underline">
-                                            {trend.title}
-                                        </Link>
-                                    </CardTitle>
-                                </CardHeader>
-                                <CardContent>
-                                    <div className="text-xs text-muted-foreground mb-2">
-                                        Traffic: <span className="font-semibold text-red-600">{trend.traffic}</span>
+                        {(() => {
+                            const trendCards = (recentIdeas || [])
+                                .filter((i: any) => i.ai_metadata?.matched_trend || i.ai_metadata?.source === 'auto_trend')
+                                .slice(0, 3)
+                                .map((i: any) => ({
+                                    id: i.id,
+                                    title: i.ai_metadata?.matched_trend || i.title,
+                                    ideaTitle: i.title,
+                                    link: i.ai_metadata?.trend_link || `/ideas/${i.id}`,
+                                    traffic: i.ai_metadata?.trend_traffic || '🔥 Tendencia EC',
+                                    categoryName: i.categories?.name || i.ai_metadata?.trend_bucket,
+                                    processed: true
+                                }))
+
+                            if (trendCards.length === 0) {
+                                return (
+                                    <div className="col-span-3 text-center py-8 text-muted-foreground">
+                                        No trends fetched yet. Click Refresh Trends to start.
                                     </div>
-                                    {trend.processed ? (
+                                )
+                            }
+
+                            return trendCards.map((trend: any) => (
+                                <Card key={trend.id} className="bg-gradient-to-br from-red-50 to-white dark:from-red-950/20 dark:to-background border-red-100 dark:border-red-900/40">
+                                    <CardHeader className="pb-2">
+                                        <CardTitle className="text-sm font-semibold line-clamp-2 leading-tight">
+                                            <Link href={`/ideas/${trend.id}`} className="hover:underline">
+                                                {trend.title}
+                                            </Link>
+                                        </CardTitle>
+                                        {trend.ideaTitle && trend.ideaTitle !== trend.title && (
+                                            <p className="text-xs text-muted-foreground line-clamp-1 pt-0.5">
+                                                🎬 {trend.ideaTitle}
+                                            </p>
+                                        )}
+                                    </CardHeader>
+                                    <CardContent>
+                                        <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
+                                            <span>Traffic: <span className="font-semibold text-red-600">{trend.traffic}</span></span>
+                                            {trend.categoryName && (
+                                                <Badge variant="secondary" className="text-[10px]">
+                                                    {trend.categoryName}
+                                                </Badge>
+                                            )}
+                                        </div>
                                         <div className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
                                             <Sparkles className="w-3 h-3 mr-1" />
                                             Auto-Processed
                                         </div>
-                                    ) : (
-                                        <Badge variant="outline" className="text-xs">New</Badge>
-                                    )}
-                                </CardContent>
-                            </Card>
-                        )) || (
-                                <div className="col-span-3 text-center py-8 text-muted-foreground">
-                                    No trends fetched yet. Click Refresh to start.
-                                </div>
-                            )}
+                                    </CardContent>
+                                </Card>
+                            ))
+                        })()}
                     </div>
                 </div>
 
