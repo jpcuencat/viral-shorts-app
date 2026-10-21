@@ -53,7 +53,9 @@ export const SceneVisualPlanSchema = z.looseObject({
     subject_key: z.string().min(1),
     scene_tags: z.array(z.string()).default([]),
     yt_search_query: z.string().min(1),
-    hf_prompt: z.string().min(5)
+    hf_prompt: z.string().min(5),
+    shows_real_person: z.boolean().catch(false),
+    person_free_prompt: z.string().optional()
 })
 export const SceneVisualPlanListSchema = z.array(SceneVisualPlanSchema)
 
@@ -77,5 +79,8 @@ export const FollowUpListSchema = z.array(
 
 export const ClipRelevanceSchema = z.looseObject({
     valid: z.boolean(),
+    has_overlay_text: z.boolean().optional(),
+    has_logo_or_watermark: z.boolean().optional(),
+    is_relevant: z.boolean().optional(),
     reason: z.string().optional()
 })

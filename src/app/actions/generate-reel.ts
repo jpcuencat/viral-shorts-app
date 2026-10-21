@@ -32,6 +32,10 @@ export interface SceneManifestEntry {
     hfPrompt: string
     ytSearchQuery: string
     sourceLabel: string
+    /** La escena muestra a una persona real identificable (nunca se le genera cara con IA). */
+    realPerson?: boolean
+    /** Prompt IA alternativo sin personas identificables para esa escena. */
+    personFreePrompt?: string
 }
 
 const MAX_AUDIT_FRAMES = 8
@@ -273,6 +277,8 @@ export async function generateReel(scriptId: string, options: GenerateReelOption
                 scene_tags: string[]
                 yt_search_query: string
                 hf_prompt: string
+                shows_real_person?: boolean
+                person_free_prompt?: string
             }
             let visualPlans: SceneVisualPlan[] = []
             const defaultSubjectKey = (content.protagonist_en || ideaTitle).slice(0, 35)
@@ -294,13 +300,19 @@ CRITICAL STORYBOARD RULES (READ CAREFULLY):
 3. SMART VAULT INDEXING:
    - "subject_key": A short, consistent 1-3 word English identifier for the main subject of this video (e.g. "cne_ecuador", "lionel_messi", "openai_chatgpt", "quito_ecuador"). Use the SAME "subject_key" across all scenes of this video so our AI Vault groups them under this topic.
    - "scene_tags": Array of 4 specific English keywords describing the exact pose/action/setting of THIS scene.
-   - "yt_search_query": A specific 4-6 word English YouTube search query to find real motion footage of this exact scene.
+   - "yt_search_query": A specific 4-6 word English YouTube search query to find real motion footage of this exact scene. Prefer queries that return news/broadcast footage of the real event or place.
+4. REAL PEOPLE RULE (MANDATORY, overrides rule 1 for those scenes):
+   - "shows_real_person": true when the scene's visual would show a specific REAL, identifiable person (a public figure, athlete, politician, a local priest, a victim, any named real individual). false for generic/anonymous people, places, objects or fictional subjects.
+   - Image generators cannot reproduce real people: they invent a different face. So for EVERY scene with shows_real_person=true, also write "person_free_prompt": an English Stable Diffusion prompt for the SAME moment WITHOUT any identifiable person — the real location (exterior/interior of the actual place), objects tied to the story (altar, candles, microphone, ballot box, stadium, jersey on a hanger), or people only from behind / far away / out of focus. Documentary photo style, natural light, no faces, no text.
+   - Never use abstract metaphors in person_free_prompt; it must be concretely tied to the narration.
 
 For each of the ${scenesData.length} scenes below, output a JSON array of ${scenesData.length} objects:
 - "subject_key": string (consistent main subject slug).
 - "scene_tags": array of 4 specific English action/setting tags.
 - "yt_search_query": specific English YouTube search query for real motion video.
 - "hf_prompt": Clean, anatomically-safe English prompt for Stable Diffusion 3 (vertical 9:16, waist-up medium shot or editorial angle, photorealistic, cinematic lighting, no text, no tangled limbs) showing the MAIN PROTAGONIST or subject of that line.
+- "shows_real_person": boolean (see rule 4).
+- "person_free_prompt": string, required when shows_real_person is true (see rule 4).
 
 SCENES:
 ${scenesData.map((s, idx) => `${idx + 1}. Narration: "${s.text}" | Visual hint: "${s.visual}"`).join('\n')}
@@ -330,6 +342,9 @@ Respond ONLY with a valid JSON array.`
                 hfPrompt: string
                 ytSearchQuery: string
                 category: string
+                realPerson: boolean
+                personFreePrompt?: string
+                sourceKind: string
             }
             const processedScenes: ProcessedScene[] = []
 
@@ -363,8 +378,11 @@ Respond ONLY with a valid JSON array.`
                     category: ideaCategory || 'general',
                     subjectKey: plan.subject_key || defaultSubjectKey,
                     sceneTags: plan.scene_tags || [],
-                    usedFiles: usedVaultFiles
+                    usedFiles: usedVaultFiles,
+                    realPerson: Boolean(plan.shows_real_person),
+                    personFreePrompt: plan.person_free_prompt
                 })
+                console.log(`[ReelGen] Escena ${i + 1}: ${vaultResult.kind}${plan.shows_real_person ? ' (persona real)' : ''} -> ${vaultResult.sourceLabel}`)
 
                 const imagePath = vaultResult.imagePath
                 const imageUrl = vaultResult.sourceLabel
@@ -388,7 +406,10 @@ Respond ONLY with a valid JSON array.`
                     sceneTags: plan.scene_tags || [],
                     hfPrompt: plan.hf_prompt,
                     ytSearchQuery: plan.yt_search_query,
-                    category: ideaCategory || 'general'
+                    category: ideaCategory || 'general',
+                    realPerson: Boolean(plan.shows_real_person),
+                    personFreePrompt: plan.person_free_prompt,
+                    sourceKind: vaultResult.kind
                 })
             }
 
@@ -427,7 +448,9 @@ Respond ONLY with a valid JSON array.`
                         sceneTags: s.sceneTags,
                         hfPrompt: s.hfPrompt,
                         ytSearchQuery: s.ytSearchQuery,
-                        sourceLabel: s.imageUrl
+                        sourceLabel: s.imageUrl,
+                        realPerson: s.realPerson,
+                        personFreePrompt: s.personFreePrompt
                     }))
                     fs.writeFileSync(manifestPath, JSON.stringify(manifestEntries, null, 2), 'utf-8')
                 } catch (manifestErr) {
@@ -461,15 +484,24 @@ Respond ONLY with a valid JSON array.`
 
                     console.log(`[ReelGen] ${qualityScore} < ${QUALITY_HEAL_THRESHOLD}: regenerando escena ${weakIdx + 1}...`)
                     try {
+                        // Regla de personas reales: si la escena muestra a una persona real, se busca otro clip real
+                        // (o, si no hay, una imagen IA sin personas); nunca una cara inventada.
+                        const healMode: VisualGenerationMode =
+                            targetScene.realPerson && visualMode !== 'ai_images' ? 'real_video' : 'ai_images'
                         const healedVault = await imageService.generateOrGetFromVault({
                             prompt: `${healedPrompt}, vertical 9:16 aspect ratio, ultra-detailed editorial photography, cinematic lighting, photorealistic, high contrast, no text`,
-                            visualMode: 'ai_images',
+                            videoSearchQuery: targetScene.ytSearchQuery,
+                            visualMode: healMode,
                             sceneIndex: weakIdx + 10,
                             durationSec: targetScene.duration,
                             category: targetScene.category,
                             subjectKey: targetScene.subjectKey,
-                            sceneTags: [`healed_${Date.now().toString().slice(-4)}`],
-                            usedFiles: usedVaultFiles
+                            sceneTags: targetScene.realPerson
+                                ? targetScene.sceneTags
+                                : [`healed_${Date.now().toString().slice(-4)}`],
+                            usedFiles: usedVaultFiles,
+                            realPerson: targetScene.realPerson,
+                            personFreePrompt: targetScene.personFreePrompt
                         })
 
                         const publicDir = path.join(process.cwd(), 'public')
@@ -481,7 +513,8 @@ Respond ONLY with a valid JSON array.`
                                 : healedVault.sourceLabel,
                             imageUrl: healedVault.sourceLabel,
                             hfPrompt: healedPrompt,
-                            videoStartTime: 0
+                            videoStartTime: healedVault.videoStartTime || 0,
+                            sourceKind: healedVault.kind
                         }
 
                         videoUrl = await videoService.generateVideo(
@@ -626,7 +659,9 @@ export async function replaceSingleReelScene(
             category: 'general',
             subjectKey: target.subjectKey,
             sceneTags: [`replaced_${Date.now()}_${Math.floor(Math.random() * 999)}`],
-            usedFiles
+            usedFiles,
+            realPerson: target.realPerson,
+            personFreePrompt: customText || target.personFreePrompt
         })
 
         const publicDir = path.join(process.cwd(), 'public')
