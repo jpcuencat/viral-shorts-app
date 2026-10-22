@@ -13,8 +13,9 @@ export default async function IdeaDetailsPage({ params }: { params: Promise<{ id
 
     const { data: idea } = await supabase
         .from('ideas')
-        .select('*, categories(name), scripts(id)')
+        .select('*, categories(name), scripts(id, created_at)')
         .eq('id', id)
+        .order('created_at', { referencedTable: 'scripts', ascending: false })
         .single()
 
     if (!idea) {
@@ -81,7 +82,7 @@ export default async function IdeaDetailsPage({ params }: { params: Promise<{ id
                 </div>
 
                 <div className="space-y-6">
-                    <IdeaActions id={idea.id} currentStatus={idea.status} scriptId={idea.scripts?.[0]?.id} />
+                    <IdeaActions id={idea.id} currentStatus={idea.status} scriptId={idea.scripts?.[0]?.id} scriptCount={idea.scripts?.length || 0} />
                 </div>
             </div>
         </div>

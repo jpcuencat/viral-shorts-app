@@ -73,3 +73,4 @@ public/ai-vault/*
 
 # caché local de la CLI de Supabase
 supabase/.temp/
+_to_delete/

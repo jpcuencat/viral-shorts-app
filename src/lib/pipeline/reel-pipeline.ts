@@ -128,7 +128,7 @@ export async function runReelPipeline(params: {
         // 1. Fetch Script with Idea & Category
         const { data: script, error: fetchError } = await supabase
             .from('scripts')
-            .select('*, ideas(title, description, categories(name))')
+            .select('*, ideas(title, description, ai_metadata, categories(name))')
             .eq('id', scriptId)
             .single()
 
@@ -360,6 +360,14 @@ Respond ONLY with JSON: {"topic_type": "...", "location_label": "...", "scenes":
             const dateLabel = factCheck?.event_date || `${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`
             const sourceLabel = (factCheck?.domains || []).slice(0, 2).join(' · ') || undefined
             const goodSourceIds: string[] = []
+            // SEGUIMIENTO: los clips reales que pasaron el filtro en el reel original son la mejor fuente
+            // para la Parte 2 (misma historia, mismo lugar). Se ofrecen primero; igual pasan por el filtro.
+            const parentIdeaId = script.ideas?.ai_metadata?.parent_idea_id as string | undefined
+            if (parentIdeaId) {
+                const inherited = await loadParentClipSources(supabase, parentIdeaId, script.user_id || userId)
+                goodSourceIds.push(...inherited)
+                if (inherited.length) console.log(`[ReelGen] Seguimiento: ${inherited.length} fuente(s) de video heredadas del reel original`)
+            }
 
             const usedVaultFiles = new Set<string>()
             interface ProcessedScene {
@@ -711,3 +719,30 @@ Respond ONLY with JSON: {"topic_type": "...", "location_label": "...", "scenes":
     }
 }
 
+/** IDs de video de origen (YouTube) de los clips aprobados que usó el reel de la idea original. */
+async function loadParentClipSources(db: SupabaseClient, parentIdeaId: string, ownerId: string): Promise<string[]> {
+    try {
+        const { data: scripts } = await db.from('scripts').select('id, user_id').eq('idea_id', parentIdeaId)
+        const scriptIds = (scripts || []).filter((x: { id: string; user_id: string | null }) => !x.user_id || x.user_id === ownerId).map((x: { id: string; user_id: string | null }) => x.id)
+        if (!scriptIds.length) return []
+        const { data: reels } = await db.from('reels').select('id').in('script_id', scriptIds)
+        const reelIds = (reels || []).map((r: { id: string }) => r.id)
+        if (!reelIds.length) return []
+        const { data: scenes } = await db.from('reel_scene_assets').select('image_path').in('reel_id', reelIds)
+        const fileNames = [...new Set((scenes || [])
+            .map((sc: { image_path: string | null }) => String(sc.image_path || '').split(/[\\/]/).pop())
+            .filter((f: string | undefined) => f && f.endsWith('.mp4')))] as string[]
+        if (!fileNames.length) return []
+        const { data: assets } = await db.from('vault_assets')
+            .select('source_video_id, clip_check')
+            .in('file_name', fileNames)
+            .not('source_video_id', 'is', null)
+        const ids = (assets || [])
+            .filter((a: { source_video_id: string | null; clip_check: string | null }) => !String(a.clip_check || '').endsWith('-rejected'))
+            .map((a: { source_video_id: string | null; clip_check: string | null }) => String(a.source_video_id))
+        return [...new Set<string>(ids)].slice(0, 4)
+    } catch (err) {
+        console.warn(`[ReelGen] No se pudieron heredar clips del reel original: ${err instanceof Error ? err.message : String(err)}`)
+        return []
+    }
+}

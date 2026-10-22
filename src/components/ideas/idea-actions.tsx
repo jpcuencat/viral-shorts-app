@@ -2,19 +2,23 @@
 
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Check, X, Trash2, Video } from 'lucide-react'
+import { Check, X, Trash2, Video, RefreshCw } from 'lucide-react'
+import { Textarea } from '@/components/ui/textarea'
 import { useRouter } from 'next/navigation'
 import { updateIdeaStatus, deleteIdea } from '@/app/actions/idea-actions'
-import { generateScript } from '@/app/actions/generate-script'
+import { generateScript, regenerateScript } from '@/app/actions/generate-script'
 
 interface IdeaActionsProps {
     id: string
     currentStatus: string
     scriptId?: string
+    scriptCount?: number
 }
 
-export function IdeaActions({ id, currentStatus, scriptId }: IdeaActionsProps) {
+export function IdeaActions({ id, currentStatus, scriptId, scriptCount = 0 }: IdeaActionsProps) {
     const [loading, setLoading] = useState(false)
+    const [regenOpen, setRegenOpen] = useState(false)
+    const [feedback, setFeedback] = useState('')
     const router = useRouter()
 
     async function handleStatusUpdate(status: 'approved' | 'rejected') {
@@ -56,6 +60,25 @@ export function IdeaActions({ id, currentStatus, scriptId }: IdeaActionsProps) {
         } catch (e) {
             console.error(e)
             alert('Unexpected error')
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    async function handleRegenerateScript() {
+        setLoading(true)
+        try {
+            const result = await regenerateScript(id, feedback)
+            if (result.error) {
+                alert(result.error)
+            } else if (result.scriptId) {
+                setRegenOpen(false)
+                setFeedback('')
+                router.push(`/scripts/${result.scriptId}`)
+            }
+        } catch (e) {
+            console.error(e)
+            alert('Error inesperado al regenerar el guion')
         } finally {
             setLoading(false)
         }
@@ -127,8 +150,45 @@ export function IdeaActions({ id, currentStatus, scriptId }: IdeaActionsProps) {
                         onClick={() => router.push(`/scripts/${scriptId}`)}
                     >
                         <Video className="mr-2 h-4 w-4" />
-                        View Generated Script
+                        View Generated Script{scriptCount > 1 ? ` (versión ${scriptCount})` : ''}
                     </Button>
+                )}
+
+                {scriptId && currentStatus === 'approved' && !regenOpen && (
+                    <Button
+                        className="w-full"
+                        variant="outline"
+                        onClick={() => setRegenOpen(true)}
+                        disabled={loading}
+                    >
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                        Regenerar guion
+                    </Button>
+                )}
+
+                {scriptId && currentStatus === 'approved' && regenOpen && (
+                    <div className="space-y-2 rounded-md border bg-background p-3">
+                        <p className="text-sm font-medium">¿Qué debe corregir el nuevo guion? (opcional)</p>
+                        <Textarea
+                            value={feedback}
+                            onChange={(e) => setFeedback(e.target.value)}
+                            placeholder="Ej.: el dato de la fecha está mal; el gancho es muy exagerado; enfócate en la fiscal y no en el contexto político…"
+                            rows={4}
+                            disabled={loading}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                            Se crea una versión nueva con verificación de hechos actualizada. El guion anterior y su reel quedan guardados.
+                        </p>
+                        <div className="flex gap-2">
+                            <Button className="flex-1" onClick={handleRegenerateScript} disabled={loading}>
+                                <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                                {loading ? 'Regenerando…' : 'Regenerar'}
+                            </Button>
+                            <Button variant="ghost" onClick={() => setRegenOpen(false)} disabled={loading}>
+                                Cancelar
+                            </Button>
+                        </div>
+                    </div>
                 )}
 
                 {currentStatus === 'rejected' && (

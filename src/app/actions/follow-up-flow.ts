@@ -26,8 +26,9 @@ export async function generateFollowUpIdeas(
 
     const { data: sourceIdea, error: ideaError } = await supabase
         .from('ideas')
-        .select('*, categories(name), scripts(content, seo_title)')
+        .select('*, categories(name), scripts(content, seo_title, created_at)')
         .eq('id', sourceIdeaId)
+        .order('created_at', { referencedTable: 'scripts', ascending: false })
         .single()
 
     if (ideaError || !sourceIdea) {
@@ -35,6 +36,7 @@ export async function generateFollowUpIdeas(
     }
 
     let previousScriptSummary = ''
+    let verifiedSection = ''
     const firstScript = Array.isArray(sourceIdea.scripts) ? sourceIdea.scripts[0] : null
     if (firstScript?.content) {
         try {
@@ -49,6 +51,18 @@ GUION DEL VIDEO ANTERIOR (Lo que el espectador YA vio):
 - Hook: "${parsed?.hook_audio || ''}"
 - Desarrollo: "${paragraphs}"
 `
+            const fc = parsed?.fact_check
+            if (fc?.verified) {
+                verifiedSection = `
+HECHOS VERIFICADOS DE LA NOTICIA ORIGINAL (fuentes: ${(fc.domains || []).join(', ')}${fc.location ? `; lugar: ${fc.location}` : ''}):
+${fc.brief || '(ver guion anterior: solo lo dicho allí está confirmado)'}
+
+REGLAS DE VERACIDAD PARA LAS IDEAS:
+- Cada idea debe poder sostenerse con estos hechos o con información pública verificable; no prometas revelaciones, multas, sanciones, reacciones ni consecuencias que no consten.
+- Si un ángulo (p. ej. consecuencias o impacto futuro) no tiene base confirmada, plantéalo como explicación del proceso o pregunta abierta ("qué puede pasar ahora según la ley"), nunca como hecho.
+- Mantén la MISMA historia, lugar y protagonistas; no mezcles otros casos.
+`
+            }
         } catch {
             // ignore parse error
         }
@@ -65,12 +79,13 @@ IDEA BASE ACTUAL:
 - Categoría: "${sourceIdea.categories?.name || 'General'}"
 - Tendencia original: "${sourceIdea.ai_metadata?.matched_trend || sourceIdea.title}"
 ${previousScriptSummary}
+${verifiedSection}
 
 ${customAngle?.trim() ? `ENFOQUE ESPECÍFICO SOLICITADO POR EL CREADOR:\n"${customAngle.trim()}"\n(Prioriza este enfoque en las propuestas).` : ''}
 
 INSTRUCCIONES:
 Genera 4 ideas de seguimiento altamente virales en ESPAÑOL que continúen o expandan este tema desde ángulos complementarios:
-1. "Parte 2 / Lo que nadie te contó": Revelación o dato clave que quedó fuera del primer video.
+1. "Parte 2 / Lo que nadie te contó": Dato clave CONFIRMADO que quedó fuera del primer video.
 2. "Consecuencias / Multas / Errores": Qué pasa si te equivocas, multas, sanciones o errores comunes que comete la gente en este tema.
 3. "Guía Rápida / Caso Práctico": Cómo actuar paso a paso o qué hacer exactamente ante esta situación.
 4. "Debate / Impacto Futuro": El giro polémico o qué va a pasar en los próximos días con este tema.

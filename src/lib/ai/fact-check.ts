@@ -30,6 +30,8 @@ export async function researchFacts(input: {
     description?: string
     trendTitle?: string
     trendLink?: string
+    /** Si es un video de seguimiento: título de la noticia original (ancla la investigación a esa historia). */
+    parentTitle?: string
 }): Promise<FactCheck> {
     const today = new Date().toLocaleDateString('es-EC', { day: 'numeric', month: 'long', year: 'numeric' })
     const prompt = `Eres un verificador de datos para un canal de noticias en video. Hoy es ${today}.
@@ -39,6 +41,7 @@ TEMA: "${input.title}"
 ${input.description ? `DESCRIPCIÓN DE LA IDEA: "${input.description}"` : ''}
 ${input.trendTitle ? `TENDENCIA ORIGINAL: "${input.trendTitle}"` : ''}
 ${input.trendLink ? `ENLACE DE ORIGEN: ${input.trendLink}` : ''}
+${input.parentTitle ? `ES UN VIDEO DE SEGUIMIENTO de la noticia: "${input.parentTitle}". Investiga ESA MISMA historia (novedades, contexto, consecuencias ya confirmadas) y el ángulo nuevo del tema; no mezcles otros casos.` : ''}
 
 Responde EXACTAMENTE con este formato (en español):
 HECHOS CONFIRMADOS:

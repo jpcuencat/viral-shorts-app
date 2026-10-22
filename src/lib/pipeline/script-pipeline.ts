@@ -10,7 +10,9 @@ import { researchFacts } from '@/lib/ai/fact-check'
 export async function generateScriptForIdea(
     supabase: SupabaseClient,
     ideaId: string,
-    expectedUserId?: string
+    expectedUserId?: string,
+    /** Regeneración: comentarios del usuario sobre qué corregir y el guion anterior a reemplazar. */
+    regen?: { feedback?: string; previousScriptId?: string }
 ): Promise<{ success?: boolean; scriptId?: string; error?: string }> {
 
     // 1. Fetch the Idea Context
@@ -34,7 +36,22 @@ export async function generateScriptForIdea(
             description: idea.description || undefined,
             trendTitle: idea.ai_metadata?.matched_trend,
             trendLink: idea.ai_metadata?.trend_link,
+            parentTitle: idea.ai_metadata?.parent_idea_title,
         })
+        // SEGUIMIENTO: si la investigación del ángulo nuevo no confirma nada, se hereda la verificación
+        // del video original (misma historia), para no caer en un guion genérico sin hechos.
+        if (!facts.verified && idea.ai_metadata?.parent_idea_id) {
+            const parentFacts = await loadParentFactCheck(supabase, idea.ai_metadata.parent_idea_id)
+            if (parentFacts?.verified && parentFacts.brief) {
+                console.log(`[FactCheck] Seguimiento: se reutiliza la verificación de la noticia original (${parentFacts.domains?.join(', ')})`)
+                facts.verified = true
+                facts.brief = parentFacts.brief
+                facts.sources = parentFacts.sources || []
+                facts.domains = parentFacts.domains || []
+                facts.location = facts.location || parentFacts.location
+                facts.eventDate = facts.eventDate || parentFacts.event_date
+            }
+        }
         const factSection = facts.verified
             ? `
       INFORMACIÓN VERIFICADA (investigación en Google; ÚNICA base factual permitida):
@@ -54,6 +71,25 @@ export async function generateScriptForIdea(
       (detenciones, acusaciones, cifras, declaraciones) sobre personas reales ni instituciones.
 `
 
+        // 1.C REGENERACIÓN: el guion anterior y lo que el usuario quiere corregir
+        let regenSection = ''
+        if (regen) {
+            let previousText = ''
+            if (regen.previousScriptId) {
+                const { data: prev } = await supabase.from('scripts').select('content').eq('id', regen.previousScriptId).single()
+                try {
+                    const pc = typeof prev?.content === 'string' ? JSON.parse(prev.content) : prev?.content
+                    const paragraphs = Array.isArray(pc?.body_paragraphs) ? pc.body_paragraphs.join(' ') : ''
+                    previousText = [pc?.hook_audio, paragraphs].filter(Boolean).join(' ').slice(0, 2500)
+                } catch { /* contenido no legible */ }
+            }
+            regenSection = `
+      REGENERACIÓN: el creador RECHAZÓ el guion anterior. Escribe uno NUEVO para la misma idea (otro gancho y otra estructura).
+      ${previousText ? `GUION ANTERIOR (no lo copies): "${previousText}"` : ''}
+      ${regen.feedback?.trim() ? `CORRECCIONES PEDIDAS POR EL CREADOR (OBLIGATORIAS, salvo que contradigan las reglas de veracidad):\n      "${regen.feedback.trim().slice(0, 1500)}"` : 'Corrige errores de datos, ritmo o claridad que tuviera el anterior.'}
+`
+        }
+
         // 2. Construct the Prompt (Visual Storyboard & Direct Protagonist Focus)
         const prompt = `
       Actúa como un Director y Guionista Experto en YouTube Shorts y TikTok.
@@ -64,6 +100,7 @@ export async function generateScriptForIdea(
       - Descripción: "${idea.description}"
       - Categoría: "${idea.categories?.name || 'General'}"
       ${factSection}
+      ${regenSection}
       ${idea.ai_metadata?.parent_idea_title ? `- VIDEO DE SEGUIMIENTO / CONTINUACIÓN DE: "${idea.ai_metadata.parent_idea_title}" (Ángulo: ${idea.ai_metadata?.follow_up_angle || 'Parte 2'}). Profundiza en este nuevo ángulo sin repetir lo obvio.` : ''}
       
       INSTRUCCIONES CRÍTICAS DE NARRACIÓN Y RITMO (MUY IMPORTANTE):
@@ -122,6 +159,7 @@ export async function generateScriptForIdea(
             verified: facts.verified,
             domains: facts.domains,
             sources: facts.sources,
+            brief: facts.brief,
             location: facts.location,
             event_date: facts.eventDate,
             checked_at: facts.checkedAt,
@@ -151,5 +189,26 @@ export async function generateScriptForIdea(
     } catch (error: any) {
         console.error('Error generating script:', error)
         return { error: 'Failed to generate script. Please try again.' }
+    }
+}
+
+/** Verificación guardada en el guion más reciente de la idea original (para videos de seguimiento). */
+export async function loadParentFactCheck(supabase: SupabaseClient, parentIdeaId: string): Promise<null | {
+    verified?: boolean; brief?: string; sources?: { title: string; uri: string }[]
+    domains?: string[]; location?: string; event_date?: string
+}> {
+    try {
+        const { data } = await supabase
+            .from('scripts')
+            .select('content, created_at')
+            .eq('idea_id', parentIdeaId)
+            .order('created_at', { ascending: false })
+            .limit(1)
+        const raw = data?.[0]?.content
+        if (!raw) return null
+        const content = typeof raw === 'string' ? JSON.parse(raw) : raw
+        return content?.fact_check || null
+    } catch {
+        return null
     }
 }
