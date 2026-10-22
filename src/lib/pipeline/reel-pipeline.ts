@@ -7,6 +7,7 @@ import { generateJson } from '@/lib/ai/gemini'
 import { StoryboardPlanSchema, QualityAuditSchema, type QualityAudit } from '@/lib/ai/schemas'
 import { subtitleService } from '@/services/subtitle-service'
 import { saveSceneManifest, type SceneManifestEntry } from '@/lib/scene-store'
+import { FootageFinder } from '@/services/footage/footage-finder'
 import { JobCancelledError, type ProgressReporter } from '@/lib/jobs/types'
 import fs from 'fs'
 import path from 'path'
@@ -322,7 +323,7 @@ STEP 2 — "visual_strategy" for EACH scene:
 For news topics aim for roughly half "real_footage" and half "news_card". The LAST scene (call to action) must be "news_card".
 
 STEP 3 — fields for each scene:
-- "yt_search_query": 3-7 words in the LANGUAGE OF THE LOCAL MEDIA COVERAGE (Spanish for Ecuador, Latin America or Spain; English for the US or UK). Use the real names and the real place plus words like "noticia", "operativo", "en vivo", "video". You may add a local TV outlet (Ecuador: Ecuavisa, Teleamazonas, TC Televisión). Never include "short" or "shorts".
+- "yt_search_query": 3-7 words in the LANGUAGE OF THE LOCAL MEDIA COVERAGE (Spanish for Ecuador, Latin America or Spain; English for the US or UK). Describe what the CAMERA would film: real names and the real place plus the action ("operativo", "llegada", "incendio", "rueda de prensa", "imágenes"). You may add "noticia" or a local TV outlet (Ecuador: Ecuavisa, Teleamazonas, TC Televisión). Never include "en vivo", "live", "short" or "shorts".
 - "card_kicker": Spanish, 1-3 words, max 18 characters (e.g. "ÚLTIMA HORA", "EL CASO", "QUÉ SE SABE", "REACCIONES", "¿Y AHORA?", "TU OPINIÓN").
 - "card_headline": Spanish, max 60 characters, factual, based ONLY on the scene narration. No exaggeration.
 - "card_detail": Spanish, max 110 characters, one complementary fact taken from the narration of this or other scenes. Never invent data.
@@ -368,6 +369,15 @@ Respond ONLY with JSON: {"topic_type": "...", "location_label": "...", "scenes":
                 goodSourceIds.push(...inherited)
                 if (inherited.length) console.log(`[ReelGen] Seguimiento: ${inherited.length} fuente(s) de video heredadas del reel original`)
             }
+            // Motor de metraje v4: busca candidatos, mira el video completo por miniaturas y recorta la zona limpia
+            const footage = new FootageFinder({
+                title: ideaTitle,
+                description: ideaDesc,
+                location: factCheck?.location,
+                eventDate: factCheck?.event_date,
+                factBrief: (content.fact_check?.brief as string | undefined) || undefined,
+                category: ideaCategory,
+            }, { preferredIds: [...goodSourceIds] })
 
             const usedVaultFiles = new Set<string>()
             interface ProcessedScene {
@@ -421,7 +431,19 @@ Respond ONLY with JSON: {"topic_type": "...", "location_label": "...", "scenes":
                 const hasCustomVideo = Boolean(customVideoSource.trim())
 
                 if (strategy === 'real_footage' && !hasCustomVideo && visualMode !== 'ai_images') {
-                    // Metraje real: primero tramos nuevos de fuentes que ya pasaron el filtro en este reel
+                    vaultResult = await footage.findClip({
+                        sceneIndex: i,
+                        sceneText: scene.text,
+                        sceneQuery: plan.yt_search_query,
+                        durationSec: duration,
+                        category: ideaCategory || 'general',
+                        subjectKey: plan.subject_key || defaultSubjectKey,
+                        sceneTags: plan.scene_tags || [],
+                        usedFiles: usedVaultFiles,
+                    })
+                }
+                // Respaldo: motor anterior solo si YouTube no entregó miniaturas de ningún video
+                if (!vaultResult && strategy === 'real_footage' && !hasCustomVideo && visualMode !== 'ai_images' && !footage.hasWorkingStoryboards) {
                     vaultResult = await imageService.fetchRealVideoClipToVault({
                         searchQuery: plan.yt_search_query,
                         sceneIndex: i,
@@ -596,6 +618,18 @@ Respond ONLY with JSON: {"topic_type": "...", "location_label": "...", "scenes":
                         let healedVault: VisualResult | null = null
                         if (isNewsTopic) {
                             if (targetScene.sourceKind !== 'news_card' && visualMode !== 'ai_images') {
+                                healedVault = await footage.findClip({
+                                    sceneIndex: weakIdx,
+                                    sceneText: targetScene.sceneData.text,
+                                    sceneQuery: targetScene.ytSearchQuery,
+                                    durationSec: targetScene.duration,
+                                    category: targetScene.category,
+                                    subjectKey: targetScene.subjectKey,
+                                    sceneTags: targetScene.sceneTags,
+                                    usedFiles: usedVaultFiles,
+                                })
+                            }
+                            if (!healedVault && targetScene.sourceKind !== 'news_card' && visualMode !== 'ai_images' && !footage.hasWorkingStoryboards) {
                                 healedVault = await imageService.fetchRealVideoClipToVault({
                                     searchQuery: targetScene.ytSearchQuery,
                                     sceneIndex: weakIdx + 3,

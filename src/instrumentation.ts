@@ -4,6 +4,10 @@
  * Para desactivarlo (por ejemplo, si algún día corre en un servidor aparte): EMBEDDED_WORKER=false
  */
 export async function register() {
+    if (process.env.NEXT_RUNTIME === 'nodejs') {
+        const { installFileLog } = await import('./lib/logging/file-log')
+        installFileLog()
+    }
     // El import va DENTRO de la condición para que solo se empaquete para el runtime de Node (no Edge)
     if (process.env.NEXT_RUNTIME === 'nodejs' && process.env.EMBEDDED_WORKER !== 'false') {
         const { startWorker } = await import('./lib/jobs/worker')

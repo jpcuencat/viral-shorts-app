@@ -163,12 +163,14 @@ class VideoService {
             const dims = await this.getVideoDimensions(imagePath)
             const isHorizontal = dims.width > dims.height
 
+            // Clips del motor v4 (.clean.mp4): ya vienen recortados a la zona limpia, sin recorte fijo extra
+            const preCrop = path.basename(imagePath).includes('.clean.') ? '' : `${BROADCAST_SAFE_CROP},`
             if (isHorizontal) {
                 // Metraje horizontal (noticieros): primero el recorte broadcast-safe (sin logos de esquina ni
                 // cintillos inferiores), luego primer plano nítido de 960 px de alto sobre fondo desenfocado
                 // del mismo clip, dejando libre la franja de subtítulos.
                 filters.push(
-                    `split[bg][fg];[bg]${BROADCAST_SAFE_CROP},scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},gblur=sigma=28,eq=brightness=-0.30[bgblur];[fg]${BROADCAST_SAFE_CROP},scale=-2:960,crop='min(iw,${width})':ih[fgsharp];[bgblur][fgsharp]overlay=(W-w)/2:(H-h)/2-110,drawbox=x=0:y=1400:w=${width}:h=520:color=black@0.32:t=fill`
+                    `split[bg][fg];[bg]${preCrop}scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},gblur=sigma=28,eq=brightness=-0.30[bgblur];[fg]${preCrop}scale=-2:960,crop='min(iw,${width})':ih[fgsharp];[bgblur][fgsharp]overlay=(W-w)/2:(H-h)/2-110,drawbox=x=0:y=1400:w=${width}:h=520:color=black@0.32:t=fill`
                 )
             } else {
                 // Native vertical 9:16 video clip + subtle lower-third contrast band for subtitles
