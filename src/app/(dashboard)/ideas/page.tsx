@@ -72,11 +72,19 @@ export default async function IdeasPage({ searchParams }: { searchParams: Promis
                         <div key={idea.id} className={`group relative flex flex-col justify-between space-y-4 rounded-xl border bg-card p-6 shadow-sm transition-all hover:shadow-md ${idea.is_archived ? 'opacity-60 grayscale' : ''}`}>
                             <div className="space-y-3">
                                 <div className="flex items-center justify-between">
-                                    {idea.categories?.name ? (
-                                        <Badge variant="outline">{idea.categories.name}</Badge>
-                                    ) : (
-                                        <Badge variant="outline">Uncategorized</Badge>
-                                    )}
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                        {idea.categories?.name ? (
+                                            <Badge variant="outline">{idea.categories.name}</Badge>
+                                        ) : (
+                                            <Badge variant="outline">Uncategorized</Badge>
+                                        )}
+                                        {/* Fecha de la tendencia de origen (antes era una categoría por día) */}
+                                        {typeof idea.ai_metadata?.trend_bucket === 'string' && (
+                                            <span className="text-xs text-muted-foreground whitespace-nowrap">
+                                                {idea.ai_metadata.trend_bucket.replace(/^Tendencias\s+/i, '')}
+                                            </span>
+                                        )}
+                                    </div>
 
                                     <div className="flex items-center gap-1">
                                         <Badge variant={

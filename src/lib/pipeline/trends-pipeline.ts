@@ -55,7 +55,9 @@ async function resolveOrCreateCategory(
 
 /** Categorías temáticas estables. Las tendencias se clasifican SOLO en estas (o en otras temáticas que ya existan),
  * nunca en una categoría nueva por día ni en nombres inventados por la IA. */
-const BASE_CATEGORIES = ['Ecuador', 'Mundo', 'Política', 'Deportes', 'Cultura Pop', 'Cine y Series', 'Tecnología', 'Finanzas', 'Ciencia', 'Curiosidades']
+/** Bandeja ÚNICA para lo que no encaja en ninguna temática (en vez de crear una categoría por día). */
+const CATCH_ALL_CATEGORY = 'Tendencias'
+const BASE_CATEGORIES = [CATCH_ALL_CATEGORY, 'Ecuador', 'Mundo', 'Política', 'Deportes', 'Cultura Pop', 'Cine y Series', 'Tecnología', 'Finanzas', 'Ciencia', 'Curiosidades']
 const DAILY_BUCKET_RE = /^tendencias\s+\d/i
 const normalizeName = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
 
@@ -95,7 +97,7 @@ export async function runTrendsPipeline(params: {
     ].map(n => n.trim()))]
     const pickAllowedCategory = (raw?: string): string => {
         const wanted = normalizeName(raw || '')
-        return allowedCategories.find(c => normalizeName(c) === wanted) || 'Mundo'
+        return allowedCategories.find(c => normalizeName(c) === wanted) || CATCH_ALL_CATEGORY
     }
     const categoryNames = allowedCategories
 
@@ -144,14 +146,15 @@ ${freshTrends.map((t, idx) => `[${idx}] (${t.traffic}) "${t.title}" ${t.newsItem
 
 REGLAS DE SELECCIÓN (IMPORTANTE):
 1. Selecciona las 4 tendencias con MAYOR potencial viral a nivel MUNDIAL, sin favorecer a ningún país (Ecuador es un mercado más y compite en igualdad). Los temas que son tendencia en varios países a la vez son señal fuerte. Busca variedad: no elijas las 4 del mismo país o tema, ni dos ideas sobre la misma noticia.
-2. "category_name": el nombre EXACTO de una de las CATEGORÍAS PERMITIDAS que mejor describa el tema. Si es una noticia local de Ecuador, usa "Ecuador"; si es de otro país o internacional, usa "Mundo" salvo que encaje mejor una temática (Deportes, Tecnología, etc.).
+2. La categoría NO es un filtro: elige las tendencias por su potencial viral aunque no encajen en ninguna categoría.
+   "category_name": el nombre EXACTO de la CATEGORÍA PERMITIDA que mejor describa el tema (noticia local de Ecuador → "Ecuador"; internacional → "Mundo" salvo que encaje mejor una temática como Deportes o Tecnología). Si no encaja claramente en ninguna, usa "Tendencias". Nunca inventes una categoría nueva.
 3. VERACIDAD del título y la descripción: gancho llamativo pero fiel a lo que dice la tendencia. NO inventes documentos filtrados, secretos, amenazas, cifras ni detenciones que el titular no menciona; usa "presunto" para acusaciones. Nada de "SHOCK" o "ALERTA" si los hechos no lo justifican.
 
 Responde SOLO con un JSON Array válido con este formato exacto:
 [
   {
     "trend_index": 0,
-    "category_name": "Mundo",
+    "category_name": "Tendencias",
     "title": "Título viral en español con gancho irresistible para Short",
     "description": "Explicación clara de qué está pasando en esta tendencia/red social y el ángulo narrativo del video",
     "viral_score": 96,
