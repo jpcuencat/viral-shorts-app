@@ -2,7 +2,6 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { getDailyTrends, getTodayTrendCategoryName } from '@/lib/trends'
 import { generateJson } from '@/lib/ai/gemini'
 import { TrendSelectionSchema } from '@/lib/ai/schemas'
-import { generateScriptForIdea } from './script-pipeline'
 import { JobCancelledError, type ProgressReporter } from '@/lib/jobs/types'
 
 /**
@@ -54,6 +53,12 @@ async function resolveOrCreateCategory(
     return categoriesCache[0]
 }
 
+/** Categorías temáticas estables. Las tendencias se clasifican SOLO en estas (o en otras temáticas que ya existan),
+ * nunca en una categoría nueva por día ni en nombres inventados por la IA. */
+const BASE_CATEGORIES = ['Ecuador', 'Mundo', 'Política', 'Deportes', 'Cultura Pop', 'Cine y Series', 'Tecnología', 'Finanzas', 'Ciencia', 'Curiosidades']
+const DAILY_BUCKET_RE = /^tendencias\s+\d/i
+const normalizeName = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
+
 export interface TrendsPipelineResult {
     processed: number
     created: number
@@ -62,7 +67,8 @@ export interface TrendsPipelineResult {
 }
 
 /**
- * Analiza las tendencias mundiales, elige las más virales con Gemini y crea idea + guion para cada una.
+ * Analiza las tendencias mundiales, elige las más virales con Gemini y crea ideas PENDIENTES de aprobación
+ * (el guion se genera después, cuando el creador aprueba la idea y lo pide).
  * Se ejecuta en el worker de trabajos con un cliente de base de datos inyectado.
  */
 export async function runTrendsPipeline(params: {
@@ -82,10 +88,16 @@ export async function runTrendsPipeline(params: {
     const { data: dbCategories } = await supabase.from('categories').select('id, name')
     const categoriesCache: { id: string; name: string }[] = dbCategories ? [...dbCategories] : []
 
-    // Ensure today's daily trend category exists in DB
-    await resolveOrCreateCategory(supabase, categoriesCache, todayTrendCategory)
-
-    const categoryNames = categoriesCache.map(c => c.name)
+    // Categorías permitidas: las temáticas existentes (sin las antiguas "Tendencias DD Mes") + las base
+    const allowedCategories = [...new Set([
+        ...categoriesCache.map(c => c.name).filter(n => !DAILY_BUCKET_RE.test(n)),
+        ...BASE_CATEGORIES,
+    ].map(n => n.trim()))]
+    const pickAllowedCategory = (raw?: string): string => {
+        const wanted = normalizeName(raw || '')
+        return allowedCategories.find(c => normalizeName(c) === wanted) || 'Mundo'
+    }
+    const categoryNames = allowedCategories
 
     // 2. Tendencias en vivo a nivel MUNDIAL (Google Trends multi-país, X mundial, noticias internacionales, redes; Ecuador incluido)
     await report(8, 'Leyendo tendencias mundiales', 'Google Trends de varios países, X, noticias y redes')
@@ -124,27 +136,22 @@ export async function runTrendsPipeline(params: {
     const prompt = `
 Actúa como un Director de Contenido Viral GLOBAL para YouTube Shorts, TikTok e Instagram Reels, que produce en ESPAÑOL para una audiencia hispanohablante internacional.
 
-CATEGORÍAS ACTUALES EN BASE DE DATOS:
+CATEGORÍAS PERMITIDAS (usa EXACTAMENTE uno de estos nombres en "category_name"; no inventes otros):
 ${JSON.stringify(categoryNames)}
-
-CATEGORÍA DE TENDENCIAS DEL DÍA:
-"${todayTrendCategory}"
 
 TENDENCIAS EN TIEMPO REAL A NIVEL MUNDIAL (Google Trends de varios países, X/Twitter mundial y Ecuador, noticias internacionales y de Ecuador, virales en redes, Reddit):
 ${freshTrends.map((t, idx) => `[${idx}] (${t.traffic}) "${t.title}" ${t.newsItemTitle && t.newsItemTitle !== t.title ? `- Contexto: ${t.newsItemTitle}` : ''}`).join('\n')}
 
-REGLAS DE SELECCIÓN Y CATEGORIZACIÓN HÍBRIDA (IMPORTANTE):
-1. NO te limites a las categorías existentes. Selecciona las 4 tendencias con MAYOR potencial viral a nivel MUNDIAL, sin favorecer a ningún país (Ecuador es un mercado más y compite en igualdad). Los temas que son tendencia en varios países a la vez son señal fuerte. Busca variedad: no elijas las 4 del mismo país o tema.
-2. Regla Híbrida para "category_name":
-   - Si la tendencia encaja claramente en una de las CATEGORÍAS ACTUALES, usa ese nombre exacto.
-   - Si es de una temática nueva bien definida (ej. "Mundo", "Deportes", "Cine y Series", "Cultura Pop", "Tecnología", "Finanzas", o un país concreto si el tema es local), escribe ese nuevo nombre de categoría corto (1 o 2 palabras) para que el sistema la cree automáticamente, O usa directamente "${todayTrendCategory}" si es una tendencia general/viral del día.
-   - Asegúrate de que al menos 1 o 2 tendencias generales usen "${todayTrendCategory}" o una categoría temática nueva si no son de tecnología.
+REGLAS DE SELECCIÓN (IMPORTANTE):
+1. Selecciona las 4 tendencias con MAYOR potencial viral a nivel MUNDIAL, sin favorecer a ningún país (Ecuador es un mercado más y compite en igualdad). Los temas que son tendencia en varios países a la vez son señal fuerte. Busca variedad: no elijas las 4 del mismo país o tema, ni dos ideas sobre la misma noticia.
+2. "category_name": el nombre EXACTO de una de las CATEGORÍAS PERMITIDAS que mejor describa el tema. Si es una noticia local de Ecuador, usa "Ecuador"; si es de otro país o internacional, usa "Mundo" salvo que encaje mejor una temática (Deportes, Tecnología, etc.).
+3. VERACIDAD del título y la descripción: gancho llamativo pero fiel a lo que dice la tendencia. NO inventes documentos filtrados, secretos, amenazas, cifras ni detenciones que el titular no menciona; usa "presunto" para acusaciones. Nada de "SHOCK" o "ALERTA" si los hechos no lo justifican.
 
 Responde SOLO con un JSON Array válido con este formato exacto:
 [
   {
     "trend_index": 0,
-    "category_name": "${todayTrendCategory}",
+    "category_name": "Mundo",
     "title": "Título viral en español con gancho irresistible para Short",
     "description": "Explicación clara de qué está pasando en esta tendencia/red social y el ángulo narrativo del video",
     "viral_score": 96,
@@ -163,7 +170,7 @@ Responde SOLO con un JSON Array válido con este formato exacto:
             const chosen = selectedIdeas.slice(0, 4)
             for (let k = 0; k < chosen.length; k++) {
                 const item = chosen[k]
-                await report(35 + Math.round((60 * k) / chosen.length), `Creando idea y guion ${k + 1} de ${chosen.length}`, item.title)
+                await report(35 + Math.round((60 * k) / chosen.length), `Creando idea ${k + 1} de ${chosen.length}`, item.title)
                 const trend = freshTrends[item.trend_index] || freshTrends[0]
                 if (!trend) continue
 
@@ -192,7 +199,7 @@ Responde SOLO con un JSON Array válido con este formato exacto:
                 const resolvedCategory = await resolveOrCreateCategory(
                     supabase,
                     categoriesCache,
-                    item.category_name || todayTrendCategory
+                    pickAllowedCategory(item.category_name)
                 )
 
                 // 7. Create Idea in Supabase (including user_id and rich trend metadata)
@@ -200,7 +207,8 @@ Responde SOLO con un JSON Array válido con este formato exacto:
                     title: item.title,
                     description: item.description,
                     category_id: resolvedCategory?.id,
-                    status: 'approved',
+                    // El creador revisa y aprueba; el guion se genera solo cuando él lo pide
+                    status: 'pending_approval',
                     ai_metadata: {
                         viral_score: item.viral_score || 95,
                         estimated_duration: item.estimated_duration || 45,
@@ -228,12 +236,7 @@ Responde SOLO con un JSON Array válido con este formato exacto:
                     continue
                 }
 
-                if (ideaRecord) {
-                    // 8. Auto-Generate Script for the new trend idea
-                    const scriptResult = await generateScriptForIdea(supabase, ideaRecord.id, userId)
-                    if (scriptResult.scriptId) scriptIds.push(scriptResult.scriptId)
-                    ideasCreated++
-                }
+                if (ideaRecord) ideasCreated++
             }
         }
     } catch (e) {

@@ -53,7 +53,7 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
             } else {
                 const r = job.result || {}
                 toast.success('Tendencias procesadas', {
-                    description: `Se analizaron ${r.processed ?? 0} tendencias y se crearon ${r.created ?? 0} guiones (${r.trendCategory || 'Tendencias'}).`,
+                    description: `Se analizaron ${r.processed ?? 0} tendencias y se propusieron ${r.created ?? 0} ideas para que las revises y apruebes.`,
                     action: { label: 'Ver ideas', onClick: () => router.push('/ideas') },
                 })
             }
