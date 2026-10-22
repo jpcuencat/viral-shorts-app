@@ -20,6 +20,8 @@ import {
     Image as ImageIcon,
     Film,
     Link2,
+    Upload,
+    X,
 } from 'lucide-react'
 import {
     getReelSceneManifest,
@@ -59,6 +61,38 @@ export function SceneEditorModal({ reelId, scriptId }: SceneEditorModalProps) {
     const [customPrompts, setCustomPrompts] = useState<Record<number, string>>({})
     const [customUrls, setCustomUrls] = useState<Record<number, string>>({})
     const [customStarts, setCustomStarts] = useState<Record<number, string>>({})
+    const [uploads, setUploads] = useState<Record<number, { publicPath: string; name: string }>>({})
+    const [uploadingIdx, setUploadingIdx] = useState<number | null>(null)
+
+    async function handleUpload(sceneIndex: number, file: File | undefined) {
+        if (!file) return
+        setUploadingIdx(sceneIndex)
+        try {
+            const formData = new FormData()
+            formData.append('file', file)
+            const res = await fetch('/api/upload-video', { method: 'POST', body: formData })
+            const data = await res.json().catch(() => ({}))
+            if (res.ok && data.success && data.publicPath) {
+                setUploads((prev) => ({ ...prev, [sceneIndex]: { publicPath: data.publicPath, name: file.name } }))
+                toast.success(`Video cargado para la escena #${sceneIndex + 1}`)
+            } else {
+                toast.error(data.error || 'No se pudo subir el video')
+            }
+        } catch (err) {
+            console.error(err)
+            toast.error('Error subiendo el video')
+        } finally {
+            setUploadingIdx(null)
+        }
+    }
+
+    function clearUpload(sceneIndex: number) {
+        setUploads((prev) => {
+            const next = { ...prev }
+            delete next[sceneIndex]
+            return next
+        })
+    }
 
     async function loadManifest() {
         setLoading(true)
@@ -80,10 +114,11 @@ export function SceneEditorModal({ reelId, scriptId }: SceneEditorModalProps) {
     }
 
     async function handleReplaceScene(sceneIndex: number, mode: 'ai_images' | 'real_video') {
-        const customVideoUrl = (customUrls[sceneIndex] || '').trim()
+        const uploaded = uploads[sceneIndex]
+        const customVideoUrl = uploaded ? '' : (customUrls[sceneIndex] || '').trim()
         let customStartSec = 0
-        if (mode === 'real_video' && customVideoUrl) {
-            if (!isHttpUrl(customVideoUrl)) {
+        if (mode === 'real_video' && (uploaded || customVideoUrl)) {
+            if (customVideoUrl && !isHttpUrl(customVideoUrl)) {
                 toast.error('La URL del video debe empezar con http:// o https://')
                 return
             }
@@ -101,7 +136,11 @@ export function SceneEditorModal({ reelId, scriptId }: SceneEditorModalProps) {
             const res = await replaceSingleReelScene(reelId, scriptId, sceneIndex, {
                 visualMode: mode,
                 customPromptOrQuery,
-                ...(mode === 'real_video' && customVideoUrl ? { customVideoUrl, customStartSec } : {}),
+                ...(mode === 'real_video' && uploaded
+                    ? { customVideoFile: uploaded.publicPath, customStartSec }
+                    : mode === 'real_video' && customVideoUrl
+                    ? { customVideoUrl, customStartSec }
+                    : {}),
             })
 
             if (res.success) {
@@ -158,7 +197,10 @@ export function SceneEditorModal({ reelId, scriptId }: SceneEditorModalProps) {
                         {scenes.map((scene, idx) => {
                             const isVideoClip = /\.(mp4|webm|mov)$/i.test(scene.imagePath)
                             const isBusy = replacingIdx === idx
+                            const uploaded = uploads[idx]
                             const hasUrl = Boolean((customUrls[idx] || '').trim())
+                            const hasOwnVideo = Boolean(uploaded) || hasUrl
+                            const busyAny = replacingIdx !== null || uploadingIdx !== null
 
                             return (
                                 <div
@@ -203,7 +245,7 @@ export function SceneEditorModal({ reelId, scriptId }: SceneEditorModalProps) {
                                                     [idx]: e.target.value,
                                                 }))
                                             }
-                                            disabled={replacingIdx !== null}
+                                            disabled={busyAny}
                                             className="text-xs h-8 flex-1"
                                         />
                                         <div className="flex gap-1.5 shrink-0">
@@ -211,7 +253,7 @@ export function SceneEditorModal({ reelId, scriptId }: SceneEditorModalProps) {
                                                 type="button"
                                                 size="sm"
                                                 variant="outline"
-                                                disabled={replacingIdx !== null}
+                                                disabled={busyAny}
                                                 onClick={() => handleReplaceScene(idx, 'ai_images')}
                                                 className="h-8 text-xs gap-1"
                                             >
@@ -226,7 +268,7 @@ export function SceneEditorModal({ reelId, scriptId }: SceneEditorModalProps) {
                                                 type="button"
                                                 size="sm"
                                                 variant="outline"
-                                                disabled={replacingIdx !== null}
+                                                disabled={busyAny}
                                                 onClick={() => handleReplaceScene(idx, 'real_video')}
                                                 className="h-8 text-xs gap-1"
                                             >
@@ -235,40 +277,79 @@ export function SceneEditorModal({ reelId, scriptId }: SceneEditorModalProps) {
                                                 ) : (
                                                     <Film className="h-3.5 w-3.5 text-blue-500" />
                                                 )}
-                                                {hasUrl ? 'Usar video de la URL' : 'Nuevo Clip Real'}
+                                                {uploaded ? 'Usar video subido' : hasUrl ? 'Usar video de la URL' : 'Nuevo Clip Real'}
                                             </Button>
                                         </div>
                                     </div>
 
                                     <div className="flex flex-col sm:flex-row gap-2 min-w-0">
-                                        <div className="relative flex-1 min-w-0">
-                                            <Link2 className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                                            <Input
-                                                type="url"
-                                                inputMode="url"
-                                                placeholder="Opcional: URL de un video limpio (YouTube u otra web) para esta escena"
-                                                value={customUrls[idx] || ''}
-                                                onChange={(e) =>
-                                                    setCustomUrls((prev) => ({ ...prev, [idx]: e.target.value }))
-                                                }
-                                                disabled={replacingIdx !== null}
-                                                className="text-xs h-8 pl-7"
+                                        {uploaded ? (
+                                            <div className="flex flex-1 min-w-0 items-center gap-2 rounded-md border border-blue-500/40 bg-blue-500/5 px-2 h-8 text-xs">
+                                                <Film className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+                                                <span className="truncate flex-1">{uploaded.name}</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => clearUpload(idx)}
+                                                    disabled={busyAny}
+                                                    className="text-muted-foreground hover:text-foreground"
+                                                    aria-label="Quitar video subido"
+                                                >
+                                                    <X className="h-3.5 w-3.5" />
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <div className="relative flex-1 min-w-0">
+                                                <Link2 className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                                                <Input
+                                                    type="url"
+                                                    inputMode="url"
+                                                    placeholder="Opcional: URL de un video limpio (YouTube u otra web)"
+                                                    value={customUrls[idx] || ''}
+                                                    onChange={(e) =>
+                                                        setCustomUrls((prev) => ({ ...prev, [idx]: e.target.value }))
+                                                    }
+                                                    disabled={busyAny}
+                                                    className="text-xs h-8 pl-7"
+                                                />
+                                            </div>
+                                        )}
+                                        <label
+                                            className={`inline-flex items-center justify-center gap-1 rounded-md border h-8 px-2.5 text-xs shrink-0 ${
+                                                busyAny ? 'opacity-50 pointer-events-none' : 'cursor-pointer hover:bg-muted'
+                                            }`}
+                                            title="Subir un video limpio desde tu equipo (mp4, mov, webm)"
+                                        >
+                                            {uploadingIdx === idx ? (
+                                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                            ) : (
+                                                <Upload className="h-3.5 w-3.5 text-blue-500" />
+                                            )}
+                                            {uploadingIdx === idx ? 'Subiendo...' : 'Subir video'}
+                                            <input
+                                                type="file"
+                                                accept="video/mp4,video/quicktime,video/webm,video/x-m4v"
+                                                className="hidden"
+                                                disabled={busyAny}
+                                                onChange={(e) => {
+                                                    handleUpload(idx, e.target.files?.[0])
+                                                    e.target.value = ''
+                                                }}
                                             />
-                                        </div>
+                                        </label>
                                         <Input
                                             placeholder="Inicio (1:15)"
                                             value={customStarts[idx] || ''}
                                             onChange={(e) =>
                                                 setCustomStarts((prev) => ({ ...prev, [idx]: e.target.value }))
                                             }
-                                            disabled={replacingIdx !== null || !hasUrl}
+                                            disabled={busyAny || !hasOwnVideo}
                                             className="text-xs h-8 sm:w-28"
                                             title="Segundo del video desde el que se toma el tramo (por defecto 0:00)"
                                         />
                                     </div>
-                                    {hasUrl && (
+                                    {hasOwnVideo && (
                                         <p className="text-[11px] text-muted-foreground">
-                                            Se tomarán ~{Math.ceil(scene.duration + 1.5)}s del video desde el inicio indicado. Al usar tu URL no se aplica el filtro automático de textos y logos: asegúrate de que el tramo esté limpio.
+                                            Se tomarán ~{Math.ceil(scene.duration)}s del {uploaded ? 'video subido' : 'video de la URL'} desde el inicio indicado. Al usar tu propio video no se aplica el filtro automático de textos y logos: asegúrate de que el tramo esté limpio.
                                         </p>
                                     )}
                                 </div>

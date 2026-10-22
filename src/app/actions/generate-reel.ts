@@ -605,6 +605,8 @@ export async function replaceSingleReelScene(
         customPromptOrQuery?: string
         /** URL opcional de un video limpio (YouTube u otra web) para usar directamente en esta escena. */
         customVideoUrl?: string
+        /** Ruta pública (/custom-videos/...) de un video subido por el usuario para esta escena. */
+        customVideoFile?: string
         /** Segundo del video desde el que se toma el tramo (opcional, por defecto 0). */
         customStartSec?: number
     }
@@ -628,7 +630,9 @@ export async function replaceSingleReelScene(
 
         const cleanSubjectName = (target.subjectKey || 'protagonist').replace(/_/g, ' ')
         const customText = options.customPromptOrQuery?.trim()
-        const customVideoUrl = options.customVideoUrl?.trim()
+        const customVideoFile = options.customVideoFile?.trim()
+        const customVideoUrl = customVideoFile ? undefined : options.customVideoUrl?.trim()
+        const usesOwnVideo = Boolean(customVideoFile || customVideoUrl)
 
         // Never reuse the old distorted prompt when replacing a scene:
         // build a clean, anatomically-safe editorial/broadcast shot matching any topic or protagonist!
@@ -637,7 +641,7 @@ export async function replaceSingleReelScene(
             : `Waist-up medium editorial broadcast shot of ${cleanSubjectName}, expressive posture and authentic setting matching "${target.text}", vertical 9:16 aspect ratio, ultra-detailed photography, dramatic cinematic lighting, photorealistic 8k, no text, no deformed limbs`
 
         // Con URL de video no hace falta generar prompt de imagen
-        if (!customVideoUrl) try {
+        if (!usesOwnVideo) try {
             const instructionContext = customText
                 ? `User instruction: "${customText}". Scene narration: "${target.text}".`
                 : `Scene narration: "${target.text}".`
@@ -656,7 +660,13 @@ export async function replaceSingleReelScene(
         // Exclude all currently used files in the manifest so it forces a brand new visual!
         const usedFiles = new Set<string>(manifest.map(m => path.basename(m.imagePath)))
 
-        const vaultResult = customVideoUrl
+        const vaultResult = customVideoFile
+            ? await imageService.useUploadedVideo({
+                publicPath: customVideoFile,
+                startSec: options.customStartSec,
+                durationSec: target.duration
+            })
+            : customVideoUrl
             ? await imageService.fetchUserVideoClip({
                 url: customVideoUrl,
                 startSec: options.customStartSec,
@@ -690,8 +700,8 @@ export async function replaceSingleReelScene(
             publicMediaUrl: relMedia,
             videoStartTime: vaultResult.videoStartTime || 0,
             sourceLabel: vaultResult.sourceLabel,
-            hfPrompt: customVideoUrl ? target.hfPrompt : freshEnglishPrompt,
-            ytSearchQuery: customVideoUrl || videoQuery
+            hfPrompt: usesOwnVideo ? target.hfPrompt : freshEnglishPrompt,
+            ytSearchQuery: customVideoFile || customVideoUrl || videoQuery
         }
 
         // Re-stitch the video with FFmpeg: ONLY re-renders `sceneIndex` and keeps all other scenes untouched!

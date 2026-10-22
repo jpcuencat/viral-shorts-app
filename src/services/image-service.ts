@@ -519,6 +519,45 @@ Respond ONLY with JSON: {"valid": bool, "has_overlay_text": bool, "has_logo_or_w
     }
 
     /**
+     * Usa un video subido por el usuario (public/custom-videos) para una escena concreta,
+     * tomando el tramo desde `startSec`. Solo acepta archivos dentro de public/custom-videos.
+     */
+    async useUploadedVideo(params: {
+        publicPath: string
+        startSec?: number
+        durationSec: number
+    }): Promise<VisualResult> {
+        const uploadsDir = path.join(process.cwd(), 'public', 'custom-videos')
+        const resolved = path.resolve(path.join(process.cwd(), 'public', params.publicPath.replace(/^\/+/, '')))
+        if (!resolved.startsWith(uploadsDir + path.sep)) {
+            throw new Error('Ruta de video subido no válida.')
+        }
+        if (!fsSync.existsSync(resolved)) {
+            throw new Error('No se encontró el video subido. Vuelve a subirlo.')
+        }
+
+        const { duration } = await this.probeVideo(resolved)
+        if (!duration) {
+            throw new Error('No se pudo leer el video subido (¿formato dañado?).')
+        }
+        const startSec = Math.max(0, Math.floor(params.startSec || 0))
+        if (startSec >= duration) {
+            throw new Error(`El inicio (${startSec}s) supera la duración del video (${Math.floor(duration)}s).`)
+        }
+        if (duration - startSec < params.durationSec) {
+            console.warn(`[UploadedClip] El tramo disponible (${(duration - startSec).toFixed(1)}s) es menor que la escena; se repetirá en bucle.`)
+        }
+
+        return {
+            imagePath: resolved,
+            sourceLabel: `Video subido por el usuario (desde ${startSec}s): ${path.basename(resolved)}`,
+            fromVault: true,
+            videoStartTime: startSec,
+            kind: 'custom_video'
+        }
+    }
+
+    /**
      * Obtiene el visual de una escena según el modo:
      * - 'ai_images': imágenes IA guardadas en el vault
      * - 'real_video': metraje real (video propio o B-roll de YouTube limpio)
