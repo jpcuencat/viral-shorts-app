@@ -62,7 +62,7 @@ export function FollowUpFlowModal({
     const [suggestions, setSuggestions] = useState<FollowUpIdeaSuggestion[]>([])
     const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
 
-    const [visualMode, setVisualMode] = useState<VisualGenerationMode>('ai_images')
+    const [visualMode, setVisualMode] = useState<VisualGenerationMode>('hybrid')
     const [voiceId, setVoiceId] = useState<string>('es-EC-LuisNeural')
     const [customVideoSource, setCustomVideoSource] = useState('')
     const [processingAction, setProcessingAction] = useState<'script_only' | 'full_video' | null>(null)
@@ -253,10 +253,10 @@ export function FollowUpFlowModal({
                                     </SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="ai_images">
-                                            🎨 100% Storyboard IA (Nativo 9:16 + Bóveda)
+                                            🎨 100% Imágenes IA (sin video real)
                                         </SelectItem>
                                         <SelectItem value="hybrid">
-                                            🔥 Híbrido (Clips en Movimiento Real + Imágenes IA SD3)
+                                            🧠 Automático (Recomendado: video real y tarjetas en noticias, IA en temas atemporales)
                                         </SelectItem>
                                         <SelectItem value="real_video">
                                             🎬 100% Video en Movimiento Real (Video Propio / YouTube HD)

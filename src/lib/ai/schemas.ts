@@ -53,9 +53,10 @@ export const SceneVisualPlanSchema = z.looseObject({
     subject_key: z.string().min(1),
     scene_tags: z.array(z.string()).default([]),
     yt_search_query: z.string().min(1),
-    hf_prompt: z.string().min(5),
+    // En noticias, las escenas de metraje real o tarjeta no usan prompt IA: el modelo suele dejarlo vacío o null
+    hf_prompt: z.string().nullish().transform(v => v ?? '').catch(''),
     shows_real_person: z.boolean().catch(false),
-    person_free_prompt: z.string().optional()
+    person_free_prompt: z.string().nullish().transform(v => v ?? undefined).catch(undefined)
 })
 export const SceneVisualPlanListSchema = z.array(SceneVisualPlanSchema)
 

@@ -35,7 +35,7 @@ export function GenerateReelButton({ scriptId, ideaTitle = 'Viral Short' }: Gene
     // Solo se bloquea si ESTE guion ya tiene una generación en cola o en curso (los demás pueden encolarse)
     const isGenerating = isScriptBusy(scriptId)
     const [open, setOpen] = useState(false)
-    const [visualMode, setVisualMode] = useState<VisualGenerationMode>('ai_images')
+    const [visualMode, setVisualMode] = useState<VisualGenerationMode>('hybrid')
     const [voiceId, setVoiceId] = useState<string>('es-EC-LuisNeural')
     const [customVideoSource, setCustomVideoSource] = useState<string>('')
     const [uploading, setUploading] = useState(false)
@@ -122,10 +122,10 @@ export function GenerateReelButton({ scriptId, ideaTitle = 'Viral Short' }: Gene
                             </SelectTrigger>
                             <SelectContent>
                                 <SelectItem value="ai_images">
-                                    🎨 100% Storyboard IA (Recomendado - Nativo 9:16 + Bóveda)
+                                    🎨 100% Imágenes IA (sin video real)
                                 </SelectItem>
                                 <SelectItem value="hybrid">
-                                    🔥 Híbrido (Clips en Movimiento Real + Imágenes IA SD3)
+                                    🧠 Automático (Recomendado: video real y tarjetas en noticias, IA en temas atemporales)
                                 </SelectItem>
                                 <SelectItem value="real_video">
                                     🎬 100% Video en Movimiento Real (Video Propio / YouTube HD)
@@ -133,8 +133,8 @@ export function GenerateReelButton({ scriptId, ideaTitle = 'Viral Short' }: Gene
                             </SelectContent>
                         </Select>
                         <p className="text-xs text-muted-foreground leading-relaxed">
-                            {visualMode === 'ai_images' && 'Genera fotografías verticales 9:16 nativas en alta definición con Hugging Face SD3 y zoom cinematográfico suave (cero distorsión).'}
-                            {visualMode === 'hybrid' && 'Alterna clips de video real en movimiento (de tu video propio o YouTube HD) con escenas generadas en Hugging Face SD3.'}
+                            {visualMode === 'ai_images' && 'Solo imágenes generadas con IA. No busca video real: no recomendado para noticias.'}
+                            {visualMode === 'hybrid' && 'Noticias: busca metraje real en YouTube (motor v4) y usa tarjetas informativas, nunca imágenes IA. Temas atemporales: imágenes IA y clips reales según la escena.'}
                             {visualMode === 'real_video' && 'Usa exclusivamente clips de video real en movimiento para cada escena (ideal cuando subes un video propio o pegas un link).'}
                         </p>
                     </div>

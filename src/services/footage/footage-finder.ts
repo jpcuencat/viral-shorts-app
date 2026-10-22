@@ -160,6 +160,7 @@ export class FootageFinder {
     private segments: Segment[] = []
     private searched = new Set<string>()
     private analyzedCount = 0
+    private lastVideoId = ''
     private storyboardOk = 0
     private readonly tempDir = path.join(process.cwd(), 'public', 'temp', 'footage')
     private readonly vaultDir = path.join(process.cwd(), 'public', 'ai-vault')
@@ -205,10 +206,13 @@ export class FootageFinder {
         const key = `${mode}:${q.toLowerCase()}`
         if (!q || this.searched.has(key)) return
         this.searched.add(key)
-        const input = mode === 'date' ? `ytsearchdate10:${q}` : `ytsearch15:${q}`
+        // "ytsearchdate" ya no existe en yt-dlp: se usa la URL de resultados ordenada por fecha de subida (sp=CAI%3D)
+        const input = mode === 'date'
+            ? `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}&sp=CAI%253D`
+            : `ytsearch15:${q}`
         let entries: any[] = []
         try {
-            const { stdout } = await execFileAsync(YTDLP_PATH, this.ytArgs([input, '--flat-playlist', '-J']), { timeout: 45000, maxBuffer: 20 * 1024 * 1024 })
+            const { stdout } = await execFileAsync(YTDLP_PATH, this.ytArgs([input, '--flat-playlist', '-J', '--playlist-end', '15']), { timeout: 45000, maxBuffer: 20 * 1024 * 1024 })
             entries = JSON.parse(stdout)?.entries || []
         } catch (err: any) {
             console.warn(`[Footage] Búsqueda fallida "${q}": ${String(err?.message || err).slice(0, 160)}`)
@@ -414,9 +418,9 @@ NARRATION (Spanish): "${sceneText}"
 VISUAL IDEA: "${sceneQuery}"
 
 SEGMENTS:
-${list.map((s, i) => `[${i}] ${s.description} (relevance ${s.relevance}/10, ${Math.round(s.end - s.usedUntil)}s left, from "${s.videoTitle.slice(0, 60)}")`).join('\n')}
+${list.map((s, i) => `[${i}] ${s.description} (relevance ${s.relevance}/10, ${Math.round(s.end - s.usedUntil)}s left, video ${s.videoId}${s.videoId === this.lastVideoId ? ' = SAME VIDEO AS PREVIOUS SCENE' : ''}${s.usedUntil > s.start + 0.5 ? ', PARTLY USED ALREADY' : ''})`).join('\n')}
 
-Prefer segments that match what the narration talks about; otherwise the most relevant footage of the same event. Answer -1 only if NONE belongs to this story.
+Prefer segments that match what the narration talks about. For variety, prefer a segment NOT used yet and from a DIFFERENT video than the previous scene, when it fits similarly well. Answer -1 only if NONE belongs to this story.
 Respond ONLY with JSON: {"choice":0,"reason":"..."}`
             const res = await generateJson(prompt, PickSchema, { label: 'FootagePick' })
             const seg = list[res.choice]
@@ -471,9 +475,10 @@ Respond ONLY with JSON: {"choice":0,"reason":"..."}`
 ${this.storyBlock()}
 Segment expected to show: "${seg.description}".
 
-1) "is_real_footage": true if it is real filmed video (not a studio anchor/presenter, not a talk-show set, not full-screen graphics, map, text slide, still photo, split screen, cartoon or game) in ALL frames, and not black/blurred transition frames.
+We will crop a clean window (aspect ~1.1) out of the frame, so partial problems are fine if they are marked.
+1) "is_real_footage": true if, in EVERY frame, there is a large area (at least about half of the frame height) of real filmed FIELD footage: a place, people, event, street, building. This is still true for a split screen or picture-in-picture layout if one window shows field footage (mark the other windows in "overlays"). False if the field footage is missing in any frame: studio anchor only, talk-show set, full-screen graphics, map, text slide, still photo, cartoon, game, or black/blurred transition frames.
 2) "is_relevant": true if it plausibly shows this story (place, people, event or closely related scene).
-3) "overlays": EVERY region, in ANY frame, with text or graphics added in post-production: lower-thirds, name bars, tickers, captions/subtitles, titles, channel logos/bugs, watermarks, social handles, "EN VIVO/LIVE" badges, clocks. Give each as "box_2d": [ymin, xmin, ymax, xmax] normalized 0-1000 over the full frame. Combine all frames (a logo in one frame counts for the whole clip). Text that physically exists in the scene (street signs, banners, uniforms, jerseys) is NOT an overlay.
+3) "overlays": EVERY region, in ANY frame, that must NOT appear in our crop: text or graphics added in post-production (lower-thirds, name bars, tickers, captions/subtitles, titles, channel logos/bugs, watermarks, social handles, "EN VIVO/LIVE" badges, clocks), AND in split screens: the studio anchor/presenter window, sign-language interpreter box, graphic panels and the borders between windows. Give each as "box_2d": [ymin, xmin, ymax, xmax] normalized 0-1000 over the full frame. Combine all frames (something in one frame counts for the whole clip). Text that physically exists in the scene (street signs, banners, uniforms, jerseys) is NOT an overlay.
 
 Respond ONLY with JSON: {"is_real_footage":true,"is_relevant":true,"overlays":[{"label":"lower third","box_2d":[780,40,900,700]}],"reason":"..."}`]
             for (let i = 0; i < frames.length; i++) {
@@ -491,7 +496,7 @@ Respond ONLY with JSON: {"is_real_footage":true,"is_relevant":true,"overlays":[{
                 return null
             }
             const crop = findCleanCrop(w, h, boxes)
-            if (!crop || crop.h < 300) {
+            if (!crop || crop.h < Math.max(300, h * 0.42)) {
                 this.track('gate', { seg: seg.key, ok: false, reason: 'textos/logos cubren la imagen', overlays: g.overlays.map(o => o.label), ms: Date.now() - t })
                 console.warn(`[Footage] Tramo descartado ${seg.key}: sin zona limpia suficiente`)
                 return null
@@ -546,12 +551,19 @@ Respond ONLY with JSON: {"is_real_footage":true,"is_relevant":true,"overlays":[{
         if (this.searched.size <= 1) await this.search(p.sceneQuery, 'date')
 
         let newAnalyses = 0
+        // Variedad: antes de reutilizar el mismo video, analizar un segundo/tercer video bien puntuado
+        const videosWithSegments = new Set(this.segments.filter(sg => !sg.failed).map(sg => sg.videoId))
+        if (p.sceneIndex > 0 && videosWithSegments.size < 3 && this.analyzedCount < MAX_ANALYZED_PER_REEL) {
+            const extra = [...this.candidates.values()].filter(c => !c.analyzed && c.score >= 7).sort((a, b) => b.score - a.score)[0]
+            if (extra) { newAnalyses++; await this.analyze(extra) }
+        }
         for (let round = 0; round < 6; round++) {
             const seg = await this.pickSegment(p.sceneText, p.sceneQuery, clipLen)
             if (seg) {
                 const res = await this.downloadAndClean(seg, clipLen, p)
                 if (res) {
                     p.usedFiles.add(res.file)
+                    this.lastVideoId = seg.videoId
                     console.log(`[Footage] Escena ${p.sceneIndex + 1}: ${seg.description} (${seg.videoId} ${fmt(seg.usedUntil - clipLen)}) en ${Math.round((Date.now() - t) / 1000)}s`)
                     return {
                         imagePath: path.join(this.vaultDir, res.file),

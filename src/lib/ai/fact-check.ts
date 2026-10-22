@@ -86,8 +86,8 @@ No inventes nada. No incluyas opiniones.`
             brief: noInfo ? '' : text,
             sources: sources.slice(0, 8),
             domains: [...domains].slice(0, 4),
-            location: location && !/no aplica/i.test(location) ? location : undefined,
-            eventDate: eventDate && !/no aplica/i.test(eventDate) ? eventDate : undefined,
+            location: location && !/no aplica/i.test(location) ? location.replace(/[.\s]+$/, '') : undefined,
+            eventDate: eventDate && !/no aplica/i.test(eventDate) ? eventDate.replace(/[.\s]+$/, '') : undefined,
             checkedAt,
         }
     } catch (err: any) {

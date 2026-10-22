@@ -299,7 +299,7 @@ export async function runReelPipeline(params: {
             let visualPlans: SceneVisualPlan[] = []
             let topicType: 'news_real_people' | 'news_event' | 'evergreen' =
                 factCheck?.verified ? 'news_event' : 'evergreen'
-            let locationLabel: string | undefined = factCheck?.location
+            let locationLabel: string | undefined = factCheck?.location?.replace(/[.\s]+$/, '')
             const defaultSubjectKey = (content.protagonist_en || ideaTitle).slice(0, 35)
 
             try {
@@ -342,7 +342,7 @@ Respond ONLY with JSON: {"topic_type": "...", "location_label": "...", "scenes":
                 if (plan.scenes.length === scenesData.length) {
                     visualPlans = plan.scenes as SceneVisualPlan[]
                     topicType = plan.topic_type
-                    if (plan.location_label && plan.location_label.trim()) locationLabel = plan.location_label.trim()
+                    if (plan.location_label && plan.location_label.trim()) locationLabel = plan.location_label.trim().replace(/[.\s]+$/, "")
                     const counts = visualPlans.reduce<Record<string, number>>((acc, p) => {
                         const k = p.visual_strategy || 'sin_estrategia'
                         acc[k] = (acc[k] || 0) + 1
@@ -358,7 +358,7 @@ Respond ONLY with JSON: {"topic_type": "...", "location_label": "...", "scenes":
             const isNewsTopic = topicType !== 'evergreen'
             const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
             const now = new Date()
-            const dateLabel = factCheck?.event_date || `${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`
+            const dateLabel = factCheck?.event_date?.replace(/[.\s]+$/, '') || `${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`
             const sourceLabel = (factCheck?.domains || []).slice(0, 2).join(' · ') || undefined
             const goodSourceIds: string[] = []
             // SEGUIMIENTO: los clips reales que pasaron el filtro en el reel original son la mejor fuente
@@ -425,6 +425,9 @@ Respond ONLY with JSON: {"topic_type": "...", "location_label": "...", "scenes":
                 const subtitlePath = await subtitleService.generateSRT(scene.text, duration, wordCues)
 
                 // B. SMART AI & VIDEO VAULT: Supports 'hybrid', 'real_video' (YouTube B-Roll / Custom Video), and 'ai_images' (HuggingFace SD3)
+                if (!plan.hf_prompt || plan.hf_prompt.trim().length < 5) {
+                    plan.hf_prompt = `Vertical 9:16 documentary photo about ${content.protagonist_en || ideaTitle}: ${scene.visual || scene.text}, natural light, no text`
+                }
                 const enhancedPrompt = `${plan.hf_prompt}, vertical 9:16 aspect ratio, ultra-detailed action photography, cinematic lighting, photorealistic 8k, high contrast, no text, no letters, no watermark`
 
                 let vaultResult: VisualResult | null = null
