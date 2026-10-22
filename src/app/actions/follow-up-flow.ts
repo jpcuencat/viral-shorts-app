@@ -55,7 +55,7 @@ GUION DEL VIDEO ANTERIOR (Lo que el espectador YA vio):
     }
 
     const prompt = `
-Actúa como un Director de Contenido Viral en ECUADOR y Latinoamérica para YouTube Shorts, TikTok e Instagram Reels.
+Actúa como un Director de Contenido Viral GLOBAL para YouTube Shorts, TikTok e Instagram Reels, que produce en ESPAÑOL para una audiencia hispanohablante internacional.
 
 Estamos viendo un Short que acabamos de producir y queremos crear **IDEAS DE SEGUIMIENTO (Parte 2 / Continuación / Derivados)** que enganchen a la misma audiencia sin repetir exactamente el mismo guion.
 

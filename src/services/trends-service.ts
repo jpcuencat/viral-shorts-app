@@ -1,7 +1,7 @@
 import {
     getCategoryNewsTrends,
     getDailyTrends,
-    getGoogleTrendsRSS,
+    getGlobalGoogleTrends,
     getSocialMediaViralNews,
     getXTwitterTrends,
     TrendItem,
@@ -9,16 +9,16 @@ import {
 
 class TrendsService {
     private cache: { [key: string]: { data: TrendItem[], timestamp: number } } = {};
-    private CACHE_TTL = 1000 * 60 * 20; // 20 minutes cache
+    private CACHE_TTL = 1000 * 60 * 20; // 20 minutos
 
     /**
-     * Fetch live trends:
-     * - If category is 'OPEN_TRENDS' or starts with 'Tendencias', fetches unrestricted global + social trends (X, TikTok/IG, Reddit, Google Trends, Top News)
-     * - Otherwise blends specific category news with top social/global trends
+     * Tendencias en vivo a nivel MUNDIAL (Ecuador incluido como un mercado más):
+     * - Modo abierto ('OPEN_TRENDS' o categorías "Tendencias …"): todas las fuentes globales intercaladas
+     * - Con categoría: noticias de esa categoría (ES + EN) mezcladas con lo más viral del mundo
      */
-    async getDailyTrends(geo: string = 'EC', category?: string): Promise<TrendItem[]> {
+    async getDailyTrends(category?: string): Promise<TrendItem[]> {
         const isOpenTrendMode = !category || category === 'OPEN_TRENDS' || category.toLowerCase().startsWith('tendencias');
-        const cacheKey = `${geo}_${isOpenTrendMode ? 'OPEN' : category}`;
+        const cacheKey = isOpenTrendMode ? 'OPEN' : `CAT_${category}`;
         const cached = this.cache[cacheKey];
         if (cached && (Date.now() - cached.timestamp < this.CACHE_TTL)) {
             return cached.data;
@@ -28,59 +28,43 @@ class TrendsService {
             let merged: TrendItem[] = [];
 
             if (isOpenTrendMode) {
-                merged = await getDailyTrends(geo);
+                merged = await getDailyTrends();
             } else {
-                const [categoryNews, socialViral, xTrends, googleTrends] = await Promise.all([
+                const [categoryNews, socialViral, xWorld, googleGlobal] = await Promise.all([
                     getCategoryNewsTrends(category!, 6),
-                    getSocialMediaViralNews(3),
-                    getXTwitterTrends('ecuador', 4),
-                    getGoogleTrendsRSS(geo),
+                    getSocialMediaViralNews(2),
+                    getXTwitterTrends('', 4),
+                    getGlobalGoogleTrends(3),
                 ]);
                 merged = [
                     ...categoryNews,
-                    ...xTrends,
-                    ...googleTrends.slice(0, 4),
+                    ...googleGlobal.slice(0, 5),
+                    ...xWorld,
                     ...socialViral,
                 ];
             }
 
-            this.cache[cacheKey] = {
-                data: merged,
-                timestamp: Date.now(),
-            };
-
+            this.cache[cacheKey] = { data: merged, timestamp: Date.now() };
             return merged;
         } catch (error) {
-            console.error('[TrendsService] Failed to fetch live trends:', error);
+            console.error('[TrendsService] Error obteniendo tendencias:', error);
             return [];
         }
     }
 
     /**
-     * Get a formatted string of top live trends & social phenomena for prompt injection
+     * Texto con las tendencias para incluir en los prompts.
      */
-    async getTrendsContext(geo: string = 'EC', limit: number = 14, category?: string): Promise<string> {
-        const trends = await this.getDailyTrends(geo, category);
-
-        if (trends.length === 0) {
-            return '';
-        }
-
-        const sourceLabels: Record<string, string> = {
-            x_twitter: 'X / Twitter Ecuador',
-            social_viral: 'Viral TikTok/IG/Redes',
-            google_trends: 'Google Trends Ecuador',
-            google_news: 'Noticia Impacto 24h (Ecuador/Mundo)',
-            reddit_viral: 'Reddit Viral',
-            hacker_news: 'Tech Viral',
-        };
+    async getTrendsContext(limit: number = 20, category?: string): Promise<string> {
+        const trends = await this.getDailyTrends(category);
+        if (trends.length === 0) return '';
 
         const topTrends = trends
             .slice(0, limit)
-            .map(t => `- [${sourceLabels[t.source || 'google_trends'] || 'Tendencia'}] "${t.title}" (${t.traffic})`)
+            .map(t => `- [${t.traffic}] "${t.title}"${t.newsItemTitle && t.newsItemTitle !== t.title ? ` — ${t.newsItemTitle}` : ''}`)
             .join('\n');
 
-        return `TENDENCIAS EN TIEMPO REAL EN ECUADOR Y EL MUNDO (X/Twitter Ecuador, Google Trends EC, Noticias Ecuador 24h, TikTok/IG y Global):\n${topTrends}`;
+        return `TENDENCIAS EN TIEMPO REAL A NIVEL MUNDIAL (Google Trends de varios países, X/Twitter mundial, noticias internacionales, virales en redes, Reddit; Ecuador incluido como un mercado más):\n${topTrends}`;
     }
 }
 

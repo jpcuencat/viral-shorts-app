@@ -71,8 +71,8 @@ export async function processTrends() {
 
     const categoryNames = categoriesCache.map(c => c.name)
 
-    // 2. Fetch Unrestricted Open & Social Trends focused on ECUADOR (X/Twitter EC, Google Trends EC, Ecuador News 24h, TikTok/IG, Global)
-    const allTrends = await getDailyTrends('EC', categoryNames)
+    // 2. Tendencias en vivo a nivel MUNDIAL (Google Trends multi-país, X mundial, noticias internacionales, redes; Ecuador incluido)
+    const allTrends = await getDailyTrends()
     if (allTrends.length === 0) {
         return { processed: 0, created: 0, message: 'No live trends available' }
     }
@@ -97,15 +97,15 @@ export async function processTrends() {
             .filter(Boolean)
     ])
 
-    let freshTrends = allTrends.filter(t => !existingTitles.has(t.title.toLowerCase().trim())).slice(0, 15)
-    // If all 15 were already seen recently, still take top 10 so Refresh Trends can generate fresh angles
+    let freshTrends = allTrends.filter(t => !existingTitles.has(t.title.toLowerCase().trim())).slice(0, 30)
+    // Si todas se vieron recientemente, igual se toman las 15 primeras para generar ángulos nuevos
     if (freshTrends.length === 0) {
-        freshTrends = allTrends.slice(0, 10)
+        freshTrends = allTrends.slice(0, 15)
     }
 
     // 4. Hybrid Open Evaluation using gemini-3-flash-preview
     const prompt = `
-Actúa como un Director de Contenido Viral en ECUADOR y Latinoamérica para YouTube Shorts, TikTok e Instagram Reels.
+Actúa como un Director de Contenido Viral GLOBAL para YouTube Shorts, TikTok e Instagram Reels, que produce en ESPAÑOL para una audiencia hispanohablante internacional.
 
 CATEGORÍAS ACTUALES EN BASE DE DATOS:
 ${JSON.stringify(categoryNames)}
@@ -113,14 +113,14 @@ ${JSON.stringify(categoryNames)}
 CATEGORÍA DE TENDENCIAS DEL DÍA:
 "${todayTrendCategory}"
 
-TENDENCIAS ABIERTAS EN TIEMPO REAL EN ECUADOR Y EL MUNDO (X/Twitter Ecuador, Google Trends EC, Noticias Ecuador 24h, TikTok/IG, Reddit):
+TENDENCIAS EN TIEMPO REAL A NIVEL MUNDIAL (Google Trends de varios países, X/Twitter mundial y Ecuador, noticias internacionales y de Ecuador, virales en redes, Reddit):
 ${freshTrends.map((t, idx) => `[${idx}] (${t.traffic}) "${t.title}" ${t.newsItemTitle && t.newsItemTitle !== t.title ? `- Contexto: ${t.newsItemTitle}` : ''}`).join('\n')}
 
 REGLAS DE SELECCIÓN Y CATEGORIZACIÓN HÍBRIDA (IMPORTANTE):
-1. NO te limites a las categorías existentes. Selecciona las 4 tendencias con MAYOR potencial viral (dando prioridad a lo que es tendencia hoy en ECUADOR —deportes, LigaPro, La Tri, sucesos nacionales, virales en redes de Ecuador— combinado con los fenómenos mundiales más fuertes).
+1. NO te limites a las categorías existentes. Selecciona las 4 tendencias con MAYOR potencial viral a nivel MUNDIAL, sin favorecer a ningún país (Ecuador es un mercado más y compite en igualdad). Los temas que son tendencia en varios países a la vez son señal fuerte. Busca variedad: no elijas las 4 del mismo país o tema.
 2. Regla Híbrida para "category_name":
    - Si la tendencia encaja claramente en una de las CATEGORÍAS ACTUALES, usa ese nombre exacto.
-   - Si es de una temática nueva bien definida (ej. "Ecuador", "Deportes", "Cine y Series", "Cultura Pop", "Mundo", "Finanzas"), escribe ese nuevo nombre de categoría corto (1 o 2 palabras) para que el sistema la cree automáticamente, O usa directamente "${todayTrendCategory}" si es una tendencia general/viral del día.
+   - Si es de una temática nueva bien definida (ej. "Mundo", "Deportes", "Cine y Series", "Cultura Pop", "Tecnología", "Finanzas", o un país concreto si el tema es local), escribe ese nuevo nombre de categoría corto (1 o 2 palabras) para que el sistema la cree automáticamente, O usa directamente "${todayTrendCategory}" si es una tendencia general/viral del día.
    - Asegúrate de que al menos 1 o 2 tendencias generales usen "${todayTrendCategory}" o una categoría temática nueva si no son de tecnología.
 
 Responde SOLO con un JSON Array válido con este formato exacto:

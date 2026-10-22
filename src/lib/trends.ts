@@ -10,6 +10,8 @@ export interface TrendItem {
     pictureUrl?: string;
     newsItemTitle?: string;
     newsItemUrl?: string;
+    /** Países (códigos ISO) donde el tema es tendencia en Google Trends. */
+    markets?: string[];
 }
 
 const parser = new Parser({
@@ -44,23 +46,66 @@ export function getTodayTrendCategoryName(): string {
 }
 
 /**
- * 1. Fetch Live Google Trends RSS (Default: EC for Ecuador)
+ * Mercados de Google Trends que se consultan. Las tendencias son MUNDIALES: Ecuador es un mercado más.
+ * Se puede cambiar con la variable de entorno TRENDS_MARKETS (códigos ISO separados por coma).
  */
-export async function getGoogleTrendsRSS(geo = 'EC'): Promise<TrendItem[]> {
+export const TREND_MARKETS: string[] = (process.env.TRENDS_MARKETS || 'US,GB,IN,BR,MX,ES,AR,CO,EC,PE,CL,DE,FR,JP')
+    .split(',')
+    .map(s => s.trim().toUpperCase())
+    .filter(Boolean);
+
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+
+function normalizeKey(text: string): string {
+    return (text || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-z0-9 ]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+async function fetchNewsRss(url: string, limit: number, traffic: string, source: TrendItem['source'], categoryHint?: string): Promise<TrendItem[]> {
+    try {
+        const response = await fetch(url, { headers: { 'User-Agent': UA }, next: { revalidate: 1800 } });
+        if (!response.ok) return [];
+        const feed = await parser.parseString(await response.text());
+        return (feed.items || []).slice(0, limit).map((item: any) => {
+            const rawTitle = item.title || '';
+            const cleanTitle = rawTitle.replace(/\s+-\s+[^-]+$/, '').trim();
+            return {
+                title: cleanTitle || rawTitle,
+                link: item.link || 'https://news.google.com',
+                pubDate: item.pubDate || new Date().toISOString(),
+                traffic,
+                source,
+                ...(categoryHint ? { categoryHint } : {}),
+                newsItemTitle: rawTitle,
+                newsItemUrl: item.link,
+            };
+        });
+    } catch (error) {
+        console.error(`[Trends] Error leyendo RSS (${traffic}):`, error);
+        return [];
+    }
+}
+
+/**
+ * 1. Google Trends en vivo de un país (RSS oficial).
+ */
+export async function getGoogleTrendsRSS(geo = 'US'): Promise<TrendItem[]> {
     try {
         const response = await fetch(`https://trends.google.com/trending/rss?geo=${geo}`, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+                'User-Agent': UA,
                 'Accept': 'application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8',
             },
             next: { revalidate: 1800 }
         });
-
         if (!response.ok) return [];
 
-        const xml = await response.text();
-        const feed = await parser.parseString(xml);
-
+        const feed = await parser.parseString(await response.text());
         return (feed.items || []).map((item: any) => {
             const newsTitle =
                 item.news_item?.['ht:news_item_title']?.[0] ||
@@ -81,177 +126,131 @@ export async function getGoogleTrendsRSS(geo = 'EC'): Promise<TrendItem[]> {
                 pictureUrl: item.picture,
                 newsItemTitle: newsTitle,
                 newsItemUrl: newsUrl,
+                markets: [geo],
             };
         });
     } catch (error) {
-        console.error('[Trends] Error fetching Google Trends RSS:', error);
+        console.error(`[Trends] Error leyendo Google Trends ${geo}:`, error);
         return [];
     }
 }
 
 /**
- * 2. Fetch X (Twitter) Live Trending Topics (Default: Ecuador via public Trends24 aggregator)
+ * 1B. Google Trends de todos los mercados configurados, agrupado.
+ * Un tema que es tendencia en varios países a la vez sube al principio (señal de viralidad mundial).
  */
-export async function getXTwitterTrends(countrySlug: 'ecuador' | 'united-states' | 'spain' | 'mexico' = 'ecuador', limit = 8): Promise<TrendItem[]> {
+export async function getGlobalGoogleTrends(perMarket = 6): Promise<TrendItem[]> {
+    const results = await Promise.all(TREND_MARKETS.map(geo => getGoogleTrendsRSS(geo)));
+
+    const groups = new Map<string, { item: TrendItem; markets: string[]; bestRank: number }>();
+    results.forEach((items, mIdx) => {
+        const geo = TREND_MARKETS[mIdx];
+        items.slice(0, 15).forEach((item, rank) => {
+            const key = normalizeKey(item.title);
+            if (!key) return;
+            const g = groups.get(key);
+            if (g) {
+                if (!g.markets.includes(geo)) g.markets.push(geo);
+                g.bestRank = Math.min(g.bestRank, rank);
+            } else {
+                groups.set(key, { item, markets: [geo], bestRank: rank });
+            }
+        });
+    });
+
+    const all = [...groups.values()];
+    // Multi-país primero (más países = más global); luego los mejores de cada mercado de forma equilibrada
+    const multi = all.filter(g => g.markets.length >= 2).sort((a, b) => b.markets.length - a.markets.length || a.bestRank - b.bestRank);
+    const single = all.filter(g => g.markets.length === 1 && g.bestRank < perMarket).sort((a, b) => a.bestRank - b.bestRank);
+
+    return [...multi, ...single].map(g => ({
+        ...g.item,
+        markets: g.markets,
+        traffic: g.markets.length >= 2
+            ? `Google Trends en ${g.markets.length} países (${g.markets.join(', ')})`
+            : `Google Trends ${g.markets[0]} (#${g.bestRank + 1})`,
+    }));
+}
+
+/**
+ * 2. Tendencias de X (Twitter) vía trends24.in. countrySlug vacío = MUNDIAL.
+ */
+export async function getXTwitterTrends(countrySlug = '', limit = 8): Promise<TrendItem[]> {
+    const label = countrySlug ? countrySlug.toUpperCase() : 'MUNDIAL';
     try {
-        const response = await fetch(`https://trends24.in/${countrySlug}/`, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36',
-            },
+        const response = await fetch(`https://trends24.in/${countrySlug ? `${countrySlug}/` : ''}`, {
+            headers: { 'User-Agent': UA },
             next: { revalidate: 1800 }
         });
-
         if (!response.ok) return [];
 
         const html = await response.text();
         const matches = [...html.matchAll(/class=[^>]*trend-link[^>]*>([^<]+)<\/a>/gi)]
             .map(m => m[1]?.trim())
             .filter(Boolean);
-
-        // Deduplicate while preserving top order
         const unique = [...new Set(matches)].slice(0, limit);
 
         return unique.map(topic => ({
             title: topic,
             link: `https://x.com/search?q=${encodeURIComponent(topic)}`,
             pubDate: new Date().toISOString(),
-            traffic: `X / Twitter Top (${countrySlug.toUpperCase()})`,
+            traffic: `X / Twitter (${label})`,
             source: 'x_twitter' as const,
-            newsItemTitle: `Tendencia activa en X (Twitter ${countrySlug}): ${topic}`,
+            newsItemTitle: `Tendencia activa en X (${label}): ${topic}`,
             newsItemUrl: `https://x.com/search?q=${encodeURIComponent(topic)}`,
         }));
     } catch (error) {
-        console.error('[Trends] Error fetching X/Twitter trends:', error);
+        console.error(`[Trends] Error leyendo X/Twitter (${label}):`, error);
         return [];
     }
 }
 
 /**
- * 2B. Fetch Live Ecuador Breaking News & Viral Stories (24h)
+ * 3. Noticias mundiales del día (sección Mundo en español + titulares internacionales en inglés).
  */
-export async function getEcuadorBreakingNews(limit = 6): Promise<TrendItem[]> {
-    try {
-        const query = '(Ecuador OR Quito OR Guayaquil OR Cuenca OR LigaPro OR "La Tri") when:1d';
-        const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=es-419&gl=EC&ceid=EC:es-419`;
-
-        const response = await fetch(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-            next: { revalidate: 1800 }
-        });
-
-        if (!response.ok) return [];
-
-        const xml = await response.text();
-        const feed = await parser.parseString(xml);
-
-        return (feed.items || []).slice(0, limit).map((item: any) => {
-            const rawTitle = item.title || '';
-            const cleanTitle = rawTitle.replace(/\s+-\s+[^-]+$/, '').trim();
-            return {
-                title: cleanTitle || rawTitle,
-                link: item.link || 'https://news.google.com',
-                pubDate: item.pubDate || new Date().toISOString(),
-                traffic: 'Tendencia Ecuador (24h)',
-                source: 'google_news' as const,
-                newsItemTitle: rawTitle,
-                newsItemUrl: item.link,
-            };
-        });
-    } catch (error) {
-        console.error('[Trends] Error fetching Ecuador breaking news:', error);
-        return [];
-    }
+export async function getWorldNews(limit = 6): Promise<TrendItem[]> {
+    const [es, en] = await Promise.all([
+        fetchNewsRss('https://news.google.com/rss/headlines/section/topic/WORLD?hl=es-419&gl=US&ceid=US:es-419', limit, 'Noticia Mundial (24h)', 'google_news'),
+        fetchNewsRss('https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en', limit, 'Top News Internacional (24h)', 'google_news'),
+    ]);
+    return [...es, ...en];
 }
 
 /**
- * 3. Fetch Viral Social Media Phenomena (TikTok, Instagram, Facebook, X viral stories in last 24h)
+ * 3B. Noticias de Ecuador (24h). Ecuador es un mercado más dentro del panorama mundial.
  */
-export async function getSocialMediaViralNews(limit = 6): Promise<TrendItem[]> {
-    try {
-        const query = '(viral OR tendencia OR TikTok OR Instagram OR "redes sociales" OR polémico OR increíble) when:1d';
-        const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=es-419&gl=EC&ceid=EC:es-419`;
-
-        const response = await fetch(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-            next: { revalidate: 1800 }
-        });
-
-        if (!response.ok) return [];
-
-        const xml = await response.text();
-        const feed = await parser.parseString(xml);
-
-        return (feed.items || []).slice(0, limit).map((item: any) => {
-            const rawTitle = item.title || '';
-            const cleanTitle = rawTitle.replace(/\s+-\s+[^-]+$/, '').trim();
-            return {
-                title: cleanTitle || rawTitle,
-                link: item.link || 'https://news.google.com',
-                pubDate: item.pubDate || new Date().toISOString(),
-                traffic: 'Viral en Redes (24h)',
-                source: 'social_viral' as const,
-                newsItemTitle: rawTitle,
-                newsItemUrl: item.link,
-            };
-        });
-    } catch (error) {
-        console.error('[Trends] Error fetching Social Media viral news:', error);
-        return [];
-    }
+export async function getEcuadorBreakingNews(limit = 4): Promise<TrendItem[]> {
+    const query = '(Ecuador OR Quito OR Guayaquil OR Cuenca OR LigaPro OR "La Tri") when:1d';
+    return fetchNewsRss(
+        `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=es-419&gl=EC&ceid=EC:es-419`,
+        limit, 'Noticia Ecuador (24h)', 'google_news'
+    );
 }
 
 /**
- * 4. Fetch Global Breaking News (Unrestricted Top Stories across World, Entertainment, Science, Sports, Business)
+ * 4. Fenómenos virales en redes (TikTok, Instagram, X…) de las últimas 24h, en español e inglés.
  */
-export async function getGlobalTopNews(limit = 8): Promise<TrendItem[]> {
-    try {
-        const url = `https://news.google.com/rss?hl=es-419&gl=EC&ceid=EC:es-419`;
-        const response = await fetch(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-            next: { revalidate: 1800 }
-        });
-
-        if (!response.ok) return [];
-
-        const xml = await response.text();
-        const feed = await parser.parseString(xml);
-
-        return (feed.items || []).slice(0, limit).map((item: any) => {
-            const rawTitle = item.title || '';
-            const cleanTitle = rawTitle.replace(/\s+-\s+[^-]+$/, '').trim();
-            return {
-                title: cleanTitle || rawTitle,
-                link: item.link || 'https://news.google.com',
-                pubDate: item.pubDate || new Date().toISOString(),
-                traffic: 'Top Mundial / Latam (24h)',
-                source: 'google_news' as const,
-                newsItemTitle: rawTitle,
-                newsItemUrl: item.link,
-            };
-        });
-    } catch (error) {
-        console.error('[Trends] Error fetching Global Top News:', error);
-        return [];
-    }
+export async function getSocialMediaViralNews(limit = 5): Promise<TrendItem[]> {
+    const qEs = '(viral OR tendencia OR TikTok OR Instagram OR "redes sociales") when:1d';
+    const qEn = '(viral OR TikTok OR "goes viral" OR trending OR meme) when:1d';
+    const [es, en] = await Promise.all([
+        fetchNewsRss(`https://news.google.com/rss/search?q=${encodeURIComponent(qEs)}&hl=es-419&gl=US&ceid=US:es-419`, limit, 'Viral en Redes (24h, ES)', 'social_viral'),
+        fetchNewsRss(`https://news.google.com/rss/search?q=${encodeURIComponent(qEn)}&hl=en-US&gl=US&ceid=US:en`, limit, 'Viral en Redes (24h, EN)', 'social_viral'),
+    ]);
+    return [...es, ...en];
 }
 
 /**
- * 5. Fetch Reddit r/popular Viral Posts
+ * 5. Reddit r/popular.
  */
 export async function getRedditViralTrends(limit = 5): Promise<TrendItem[]> {
     try {
         const response = await fetch('https://www.reddit.com/r/popular/.rss', {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36',
-            },
+            headers: { 'User-Agent': UA },
             next: { revalidate: 1800 }
         });
-
         if (!response.ok) return [];
-
-        const xml = await response.text();
-        const feed = await parser.parseString(xml);
-
+        const feed = await parser.parseString(await response.text());
         return (feed.items || []).slice(0, limit).map((item: any) => ({
             title: item.title || 'Reddit Viral Post',
             link: item.link || 'https://www.reddit.com/r/popular',
@@ -262,53 +261,27 @@ export async function getRedditViralTrends(limit = 5): Promise<TrendItem[]> {
             newsItemUrl: item.link,
         }));
     } catch (error) {
-        console.error('[Trends] Error fetching Reddit RSS:', error);
+        console.error('[Trends] Error leyendo Reddit:', error);
         return [];
     }
 }
 
 /**
- * 6. Fetch Real-Time Google News RSS by Specific Category (when user specifically filters by a category)
+ * 6. Noticias de una categoría concreta (48h), en español e inglés, sin limitar a un país.
  */
 export async function getCategoryNewsTrends(categoryName: string, limit = 5): Promise<TrendItem[]> {
-    try {
-        const normalized = categoryName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-        const searchQuery = CATEGORY_SEARCH_MAP[normalized] || categoryName;
-        const url = `https://news.google.com/rss/search?q=${encodeURIComponent(`${searchQuery} when:2d`)}&hl=es-419&gl=EC&ceid=EC:es-419`;
-
-        const response = await fetch(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-            next: { revalidate: 1800 }
-        });
-
-        if (!response.ok) return [];
-
-        const xml = await response.text();
-        const feed = await parser.parseString(xml);
-
-        return (feed.items || []).slice(0, limit).map((item: any) => {
-            const rawTitle = item.title || '';
-            const cleanTitle = rawTitle.replace(/\s+-\s+[^-]+$/, '').trim();
-
-            return {
-                title: cleanTitle || rawTitle,
-                link: item.link || 'https://news.google.com',
-                pubDate: item.pubDate || new Date().toISOString(),
-                traffic: 'Noticia 48h',
-                source: 'google_news' as const,
-                categoryHint: categoryName,
-                newsItemTitle: rawTitle,
-                newsItemUrl: item.link,
-            };
-        });
-    } catch (error) {
-        console.error(`[Trends] Error fetching Google News for ${categoryName}:`, error);
-        return [];
-    }
+    const normalized = categoryName.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+    const searchQuery = CATEGORY_SEARCH_MAP[normalized] || categoryName;
+    const half = Math.max(2, Math.ceil(limit / 2));
+    const [es, en] = await Promise.all([
+        fetchNewsRss(`https://news.google.com/rss/search?q=${encodeURIComponent(`${searchQuery} when:2d`)}&hl=es-419&gl=US&ceid=US:es-419`, half, 'Noticia 48h (ES)', 'google_news', categoryName),
+        fetchNewsRss(`https://news.google.com/rss/search?q=${encodeURIComponent(`${categoryName} when:2d`)}&hl=en-US&gl=US&ceid=US:en`, half, 'Noticia 48h (EN)', 'google_news', categoryName),
+    ]);
+    return [...es, ...en];
 }
 
 /**
- * 7. Fetch Viral Tech/Science Front-Page Stories from Hacker News (Algolia API)
+ * 7. Hacker News (portada).
  */
 export async function getHackerNewsTrends(limit = 4): Promise<TrendItem[]> {
     try {
@@ -316,7 +289,6 @@ export async function getHackerNewsTrends(limit = 4): Promise<TrendItem[]> {
             next: { revalidate: 1800 }
         });
         if (!response.ok) return [];
-
         const data = await response.json();
         return (data.hits || []).map((hit: any) => ({
             title: hit.title,
@@ -328,57 +300,49 @@ export async function getHackerNewsTrends(limit = 4): Promise<TrendItem[]> {
             newsItemUrl: hit.url || `https://news.ycombinator.com/item?id=${hit.objectID}`,
         }));
     } catch (error) {
-        console.error('[Trends] Error fetching Hacker News:', error);
+        console.error('[Trends] Error leyendo Hacker News:', error);
         return [];
     }
 }
 
 /**
- * Unified Open Multi-Network Trends Fetcher (Focused on ECUADOR + Global Viral)
- * Combines:
- *  - Google Trends Live (EC - Ecuador + US Global)
- *  - X (Twitter) Trending Topics in Ecuador (trends24.in/ecuador)
- *  - Ecuador Breaking News 24h (Quito, Guayaquil, Cuenca, LigaPro, La Tri, Nacional)
- *  - TikTok / Instagram / Social Viral News (24h)
- *  - Global Top News (World, Sports, Entertainment, Science, Economy)
- *  - Reddit r/popular Viral + Hacker News
+ * Tendencias MUNDIALES unificadas (Ecuador incluido como un mercado más):
+ *  - Google Trends de TREND_MARKETS, priorizando temas que son tendencia en varios países
+ *  - X (Twitter) mundial + Ecuador
+ *  - Noticias mundiales (ES + EN) y de Ecuador
+ *  - Virales en redes (ES + EN), Reddit r/popular y Hacker News
+ * El orden intercala fuentes para que ningún país o red monopolice la lista.
  */
-export async function getDailyTrends(geo = 'EC', categories: string[] = []): Promise<TrendItem[]> {
-    const [
-        googleTrendsEC,
-        xTrendsEC,
-        ecuadorNews,
-        socialViral,
-        globalTopNews,
-        googleTrendsUS,
-        redditViral,
-        hnTrends,
-    ] = await Promise.all([
-        getGoogleTrendsRSS(geo || 'EC'),
-        getXTwitterTrends('ecuador', 8),
-        getEcuadorBreakingNews(6),
-        getSocialMediaViralNews(5),
-        getGlobalTopNews(5),
-        getGoogleTrendsRSS('US'),
+export async function getDailyTrends(_geo = '', _categories: string[] = []): Promise<TrendItem[]> {
+    const [googleGlobal, xWorld, xEcuador, worldNews, ecuadorNews, socialViral, redditViral, hnTrends] = await Promise.all([
+        getGlobalGoogleTrends(5),
+        getXTwitterTrends('', 8),
+        getXTwitterTrends('ecuador', 4),
+        getWorldNews(5),
+        getEcuadorBreakingNews(4),
+        getSocialMediaViralNews(4),
         getRedditViralTrends(3),
         getHackerNewsTrends(3),
     ]);
 
-    const combined: TrendItem[] = [
-        ...xTrendsEC,
-        ...googleTrendsEC.slice(0, 8),
-        ...ecuadorNews,
-        ...socialViral,
-        ...globalTopNews,
-        ...googleTrendsUS.slice(0, 4),
-        ...redditViral,
-        ...hnTrends,
-    ];
+    const multiCountry = googleGlobal.filter(t => (t.markets?.length || 0) >= 2);
+    const singleCountry = googleGlobal.filter(t => (t.markets?.length || 0) < 2);
 
-    // Deduplicate by normalized title prefix
+    // Intercalado round-robin entre fuentes (las multi-país van primero)
+    const buckets: TrendItem[][] = [singleCountry, xWorld, worldNews, socialViral, ecuadorNews, xEcuador, redditViral, hnTrends]
+        .map(b => [...b]);
+    const interleaved: TrendItem[] = [];
+    while (buckets.some(b => b.length > 0)) {
+        for (const b of buckets) {
+            const next = b.shift();
+            if (next) interleaved.push(next);
+        }
+    }
+
+    const combined = [...multiCountry, ...interleaved];
     const seen = new Set<string>();
     return combined.filter(item => {
-        const key = item.title.toLowerCase().trim().slice(0, 40);
+        const key = normalizeKey(item.title).slice(0, 40);
         if (!key || seen.has(key)) return false;
         seen.add(key);
         return true;

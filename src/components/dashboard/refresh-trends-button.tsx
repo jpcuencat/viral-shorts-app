@@ -14,7 +14,7 @@ export function RefreshTrendsButton() {
         setLoading(true)
         try {
             const result = await processTrends()
-            alert(`✅ Se analizaron ${result.processed} tendencias de Ecuador y se crearon ${result.created} nuevos guiones virales (${result.trendCategory || 'Tendencias'}).`)
+            alert(`✅ Se analizaron ${result.processed} tendencias mundiales y se crearon ${result.created} nuevos guiones virales (${result.trendCategory || 'Tendencias'}).`)
             router.refresh()
         } catch (e) {
             console.error(e)

@@ -14,23 +14,26 @@ export async function generateIdeas(category: string, count: number = 6) {
         const isOpenTrends = category === 'OPEN_TRENDS' || category.toLowerCase().startsWith('tendencias')
         const todayBucket = getTodayTrendCategoryName()
 
-        // 1. Fetch Live Multi-Network Trends focused on ECUADOR (EC) + Global Viral
-        const trendsContext = await trendsService.getTrendsContext('EC', 16, isOpenTrends ? 'OPEN_TRENDS' : category)
+        // 1. Tendencias en vivo a nivel mundial (Ecuador incluido como un mercado más)
+        const trendsContext = await trendsService.getTrendsContext(24, isOpenTrends ? 'OPEN_TRENDS' : category)
 
         // 2. Build Prompt
         const prompt = isOpenTrends
             ? `
-      Actúa como un estratega de contenido viral en ECUADOR y Latinoamérica para YouTube Shorts, TikTok, Instagram Reels y X.
+      Actúa como un estratega de contenido viral GLOBAL para YouTube Shorts, TikTok, Instagram Reels y X, que produce en ESPAÑOL para una audiencia hispanohablante internacional.
       
       ${trendsContext}
       
-      MODO ABIERTO DE TENDENCIAS (ECUADOR + VIRALES GLOBALES EN REDES):
-      Genera ${count} ideas de videos cortos en ESPAÑOL basadas en las tendencias reales listadas arriba (priorizando temas en tendencia en Ecuador —fútbol/LigaPro/La Tri, noticias nacionales, virales en X/TikTok Ecuador— junto con fenómenos globales de alto impacto), SIN LIMITARTE a ninguna categoría fija.
+      MODO ABIERTO DE TENDENCIAS (MUNDIAL):
+      Genera ${count} ideas de videos cortos en ESPAÑOL basadas en las tendencias reales listadas arriba, SIN LIMITARTE a ninguna categoría fija.
+      - Elige por POTENCIAL VIRAL REAL, sin favorecer a ningún país. Ecuador es un mercado más: inclúyelo solo cuando su tema compita en interés.
+      - Un tema que es tendencia en varios países a la vez es señal fuerte de viralidad mundial.
+      - Busca variedad: no concentres todas las ideas en un mismo país o tema.
       
       REGLA DE CATEGORIZACIÓN HÍBRIDA:
       En el campo "suggested_category" de cada idea:
       - Asigna o bien la categoría general del día "${todayBucket}"
-      - O bien una categoría temática clara de 1-2 palabras (ej. "Ecuador", "Deportes", "Cultura Pop", "Mundo", "Finanzas", "IA").
+      - O bien una categoría temática clara de 1-2 palabras (ej. "Mundo", "Deportes", "Cultura Pop", "Tecnología", "Finanzas", "IA", o un país concreto si el tema es local).
 
       Formato de salida (JSON Array estricto):
       [
