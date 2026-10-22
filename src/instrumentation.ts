@@ -4,8 +4,9 @@
  * Para desactivarlo (por ejemplo, si algún día corre en un servidor aparte): EMBEDDED_WORKER=false
  */
 export async function register() {
-    if (process.env.NEXT_RUNTIME !== 'nodejs') return
-    if (process.env.EMBEDDED_WORKER === 'false') return
-    const { startWorker } = await import('./lib/jobs/worker')
-    startWorker()
+    // El import va DENTRO de la condición para que solo se empaquete para el runtime de Node (no Edge)
+    if (process.env.NEXT_RUNTIME === 'nodejs' && process.env.EMBEDDED_WORKER !== 'false') {
+        const { startWorker } = await import('./lib/jobs/worker')
+        startWorker()
+    }
 }

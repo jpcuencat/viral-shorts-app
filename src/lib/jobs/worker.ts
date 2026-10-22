@@ -17,6 +17,12 @@ const HEARTBEAT_MS = 15_000
 const STALE_SECONDS = 120
 const STALE_SECONDS_AT_STARTUP = 45
 const STATE_KEY = '__viralShortsWorkerState'
+const AUTH_RETRY_MS = 60_000
+
+function isAuthError(err: any): boolean {
+    const msg = String(err?.message || err || '')
+    return /invalid api key|invalid jwt|jwt|no api key|unauthorized|401/i.test(msg)
+}
 
 interface WorkerState {
     running: boolean
@@ -68,6 +74,27 @@ export function startWorker() {
 async function loop(state: WorkerState) {
     const db = getAdminClient()
 
+    // Verificar la clave de servicio antes de empezar (evita repetir el mismo error cada pocos segundos)
+    let authWarned = false
+    while (state.running) {
+        const { error } = await db.from('jobs').select('id', { head: true, count: 'exact' }).limit(1)
+        if (!error) break
+        if (isAuthError(error)) {
+            if (!authWarned) {
+                console.error(
+                    '[Worker] Supabase rechazó SUPABASE_SERVICE_ROLE_KEY ("' + error.message + '"). ' +
+                    'Copia la clave secreta vigente desde Supabase → Project Settings → API Keys → Secret keys, ' +
+                    'pégala en .env.local y reinicia el servidor. Reintentando cada minuto…'
+                )
+                authWarned = true
+            }
+        } else {
+            console.warn('[Worker] Supabase no responde todavía:', error.message)
+        }
+        await sleep(AUTH_RETRY_MS, state)
+    }
+    if (authWarned) console.log('[Worker] Clave de servicio aceptada; continuando.')
+
     await importLocalData(db).catch(err => console.warn('[Worker] Importación de datos locales incompleta:', err?.message || err))
 
     // Trabajos que quedaron "running" porque el servidor se reinició
@@ -97,6 +124,10 @@ async function loop(state: WorkerState) {
             }
         } catch (err: any) {
             console.error('[Worker] Error en el ciclo:', err?.message || err)
+            if (isAuthError(err)) {
+                await sleep(AUTH_RETRY_MS, state)
+                continue
+            }
         }
         await sleep(POLL_MS, state)
     }
