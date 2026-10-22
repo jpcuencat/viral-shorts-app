@@ -19,6 +19,7 @@ import {
     RefreshCw,
     Image as ImageIcon,
     Film,
+    Link2,
 } from 'lucide-react'
 import {
     getReelSceneManifest,
@@ -26,6 +27,23 @@ import {
     SceneManifestEntry,
 } from '@/app/actions/generate-reel'
 import { toast } from 'sonner'
+
+/** Convierte "75", "1:15" o "01:02:05" a segundos. Devuelve null si el formato no es válido. */
+function parseTimeToSeconds(raw: string): number | null {
+    const value = raw.trim()
+    if (!value) return 0
+    if (!/^\d+(:\d{1,2}){0,2}$/.test(value)) return null
+    return value.split(':').map(Number).reduce((acc, n) => acc * 60 + n, 0)
+}
+
+function isHttpUrl(raw: string): boolean {
+    try {
+        const u = new URL(raw.trim())
+        return u.protocol === 'http:' || u.protocol === 'https:'
+    } catch {
+        return false
+    }
+}
 
 interface SceneEditorModalProps {
     reelId: string
@@ -39,6 +57,8 @@ export function SceneEditorModal({ reelId, scriptId }: SceneEditorModalProps) {
     const [scenes, setScenes] = useState<SceneManifestEntry[]>([])
     const [replacingIdx, setReplacingIdx] = useState<number | null>(null)
     const [customPrompts, setCustomPrompts] = useState<Record<number, string>>({})
+    const [customUrls, setCustomUrls] = useState<Record<number, string>>({})
+    const [customStarts, setCustomStarts] = useState<Record<number, string>>({})
 
     async function loadManifest() {
         setLoading(true)
@@ -60,12 +80,28 @@ export function SceneEditorModal({ reelId, scriptId }: SceneEditorModalProps) {
     }
 
     async function handleReplaceScene(sceneIndex: number, mode: 'ai_images' | 'real_video') {
+        const customVideoUrl = (customUrls[sceneIndex] || '').trim()
+        let customStartSec = 0
+        if (mode === 'real_video' && customVideoUrl) {
+            if (!isHttpUrl(customVideoUrl)) {
+                toast.error('La URL del video debe empezar con http:// o https://')
+                return
+            }
+            const parsedStart = parseTimeToSeconds(customStarts[sceneIndex] || '')
+            if (parsedStart === null) {
+                toast.error('El inicio debe ser en segundos (75) o minutos:segundos (1:15).')
+                return
+            }
+            customStartSec = parsedStart
+        }
+
         setReplacingIdx(sceneIndex)
         try {
             const customPromptOrQuery = customPrompts[sceneIndex] || ''
             const res = await replaceSingleReelScene(reelId, scriptId, sceneIndex, {
                 visualMode: mode,
                 customPromptOrQuery,
+                ...(mode === 'real_video' && customVideoUrl ? { customVideoUrl, customStartSec } : {}),
             })
 
             if (res.success) {
@@ -99,7 +135,7 @@ export function SceneEditorModal({ reelId, scriptId }: SceneEditorModalProps) {
                         Editor de Escenas Individuales
                     </DialogTitle>
                     <DialogDescription className="leading-relaxed">
-                        Si una escena específica del Reel no te convence, reemplázala aquí por una nueva imagen IA o clip en movimiento y el video se re-ensamblará en segundos sin perder las demás escenas ni volver a generar el audio.
+                        Si una escena específica del Reel no te convence, reemplázala aquí por una nueva imagen IA, un clip buscado automáticamente o un video tuyo indicado por URL. El video se re-ensambla sin perder las demás escenas ni volver a generar el audio.
                     </DialogDescription>
                 </DialogHeader>
 
@@ -122,6 +158,7 @@ export function SceneEditorModal({ reelId, scriptId }: SceneEditorModalProps) {
                         {scenes.map((scene, idx) => {
                             const isVideoClip = /\.(mp4|webm|mov)$/i.test(scene.imagePath)
                             const isBusy = replacingIdx === idx
+                            const hasUrl = Boolean((customUrls[idx] || '').trim())
 
                             return (
                                 <div
@@ -198,10 +235,42 @@ export function SceneEditorModal({ reelId, scriptId }: SceneEditorModalProps) {
                                                 ) : (
                                                     <Film className="h-3.5 w-3.5 text-blue-500" />
                                                 )}
-                                                Nuevo Clip Real
+                                                {hasUrl ? 'Usar video de la URL' : 'Nuevo Clip Real'}
                                             </Button>
                                         </div>
                                     </div>
+
+                                    <div className="flex flex-col sm:flex-row gap-2 min-w-0">
+                                        <div className="relative flex-1 min-w-0">
+                                            <Link2 className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                                            <Input
+                                                type="url"
+                                                inputMode="url"
+                                                placeholder="Opcional: URL de un video limpio (YouTube u otra web) para esta escena"
+                                                value={customUrls[idx] || ''}
+                                                onChange={(e) =>
+                                                    setCustomUrls((prev) => ({ ...prev, [idx]: e.target.value }))
+                                                }
+                                                disabled={replacingIdx !== null}
+                                                className="text-xs h-8 pl-7"
+                                            />
+                                        </div>
+                                        <Input
+                                            placeholder="Inicio (1:15)"
+                                            value={customStarts[idx] || ''}
+                                            onChange={(e) =>
+                                                setCustomStarts((prev) => ({ ...prev, [idx]: e.target.value }))
+                                            }
+                                            disabled={replacingIdx !== null || !hasUrl}
+                                            className="text-xs h-8 sm:w-28"
+                                            title="Segundo del video desde el que se toma el tramo (por defecto 0:00)"
+                                        />
+                                    </div>
+                                    {hasUrl && (
+                                        <p className="text-[11px] text-muted-foreground">
+                                            Se tomarán ~{Math.ceil(scene.duration + 1.5)}s del video desde el inicio indicado. Al usar tu URL no se aplica el filtro automático de textos y logos: asegúrate de que el tramo esté limpio.
+                                        </p>
+                                    )}
                                 </div>
                             )
                         })}

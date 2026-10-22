@@ -428,6 +428,97 @@ Respond ONLY with JSON: {"valid": bool, "has_overlay_text": bool, "has_logo_or_w
     }
 
     /**
+     * Descarga el tramo de un video indicado por el usuario (YouTube u otra web compatible con yt-dlp)
+     * para una escena concreta. El usuario garantiza que el video está limpio, así que no pasa por el
+     * filtro visual automático (se aceptan también videos verticales). Se guarda en el vault para reutilizarlo.
+     */
+    async fetchUserVideoClip(params: {
+        url: string
+        startSec?: number
+        durationSec: number
+        category: string
+        subjectKey: string
+        sceneTags: string[]
+    }): Promise<VisualResult> {
+        const { url, durationSec, category, subjectKey, sceneTags } = params
+        let parsed: URL
+        try {
+            parsed = new URL(url.trim())
+        } catch {
+            throw new Error('La URL del video no es válida.')
+        }
+        if (!['http:', 'https:'].includes(parsed.protocol)) {
+            throw new Error('La URL del video debe empezar con http:// o https://')
+        }
+
+        await fs.mkdir(this.vaultDir, { recursive: true })
+        const startSec = Math.max(0, Math.floor(params.startSec || 0))
+        const clipLen = Math.max(5, Math.ceil(durationSec + 1.5))
+        const baseName = `${this.slugify(category)}-${this.slugify(subjectKey)}-user_clip_${uuidv4().slice(0, 6)}`
+        const outputTemplate = path.join(this.vaultDir, `${baseName}.%(id)s.%(ext)s`)
+
+        const args: string[] = [
+            parsed.toString(),
+            '--js-runtimes', 'node',
+            '--no-playlist',
+            '--no-warnings',
+            '-f', 'bestvideo[height<=1080][ext=mp4]/best[height<=1080][ext=mp4]/bestvideo[height<=1080]+bestaudio/best',
+            '--merge-output-format', 'mp4',
+            '--download-sections', `*${startSec}-${startSec + clipLen}`,
+            '--force-keyframes-at-cuts',
+            '--force-overwrites',
+            '-o', outputTemplate
+        ]
+        if (path.isAbsolute(ffmpegPath)) {
+            args.push('--ffmpeg-location', ffmpegPath)
+        }
+
+        console.log(`[UserClip] Descargando ${clipLen}s desde ${startSec}s de ${parsed.toString()}`)
+        let ytErr = ''
+        await execFileAsync(this.ytDlpPath, args, { timeout: 120000 }).catch((e: any) => {
+            ytErr = (e?.stderr || e?.message || '').toString().split('\n').filter(Boolean).slice(-1)[0] || ''
+        })
+
+        const produced = fsSync.readdirSync(this.vaultDir).find(f => f.startsWith(`${baseName}.`) && f.endsWith('.mp4'))
+        if (!produced) {
+            throw new Error(`No se pudo descargar el video de esa URL${ytErr ? `: ${ytErr}` : '.'}`)
+        }
+
+        const producedPath = path.join(this.vaultDir, produced)
+        const { duration } = await this.probeVideo(producedPath)
+        if (duration < 1) {
+            await fs.unlink(producedPath).catch(() => { })
+            throw new Error('El tramo descargado está vacío. Revisa el segundo de inicio (¿es mayor que la duración del video?).')
+        }
+
+        const fileName = `${baseName}.mp4`
+        const finalPath = path.join(this.vaultDir, fileName)
+        await fs.rename(producedPath, finalPath)
+
+        const entries = await this.readVaultIndex()
+        entries.push({
+            fileName,
+            filePath: finalPath,
+            mediaType: 'video',
+            category: this.slugify(category),
+            subjectKey: this.slugify(subjectKey),
+            tags: sceneTags.map(t => this.slugify(t)).filter(Boolean),
+            prompt: parsed.toString(),
+            createdAt: new Date().toISOString(),
+            clipCheck: 'user-provided',
+            sourceVideoId: produced.slice(baseName.length + 1, -4)
+        })
+        await this.writeVaultIndex(entries)
+
+        return {
+            imagePath: finalPath,
+            sourceLabel: `Video indicado por el usuario (desde ${startSec}s): ${fileName}`,
+            fromVault: false,
+            kind: 'real_video'
+        }
+    }
+
+    /**
      * Obtiene el visual de una escena según el modo:
      * - 'ai_images': imágenes IA guardadas en el vault
      * - 'real_video': metraje real (video propio o B-roll de YouTube limpio)
