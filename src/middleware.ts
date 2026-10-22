@@ -12,8 +12,9 @@ export const config = {
          * - _next/static (static files)
          * - _next/image (image optimization files)
          * - favicon.ico (favicon file)
-         * Feel free to modify this pattern to include more paths.
+         * - api/upload-video: el middleware copia el cuerpo de la petición con un límite de 10 MB,
+         *   lo que corta los videos subidos. Esa ruta valida la sesión por su cuenta.
          */
-        '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+        '/((?!_next/static|_next/image|favicon.ico|api/upload-video|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
     ],
 }
