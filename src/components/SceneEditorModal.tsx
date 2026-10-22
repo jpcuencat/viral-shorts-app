@@ -196,6 +196,7 @@ export function SceneEditorModal({ reelId, scriptId }: SceneEditorModalProps) {
                     <div className="space-y-3 py-2 min-w-0">
                         {scenes.map((scene, idx) => {
                             const isVideoClip = /\.(mp4|webm|mov)$/i.test(scene.imagePath)
+                            const isNewsCard = /[\\/]card_[^\\/]+\.jpg$/i.test(scene.imagePath)
                             const isBusy = replacingIdx === idx
                             const uploaded = uploads[idx]
                             const hasUrl = Boolean((customUrls[idx] || '').trim())
@@ -217,10 +218,12 @@ export function SceneEditorModal({ reelId, scriptId }: SceneEditorModalProps) {
                                                 className={
                                                     isVideoClip
                                                         ? 'border-blue-500/40 text-blue-600 text-[10px]'
-                                                        : 'border-pink-500/40 text-pink-600 text-[10px]'
+                                                        : isNewsCard
+                                                            ? 'border-amber-500/40 text-amber-600 text-[10px]'
+                                                            : 'border-pink-500/40 text-pink-600 text-[10px]'
                                                 }
                                             >
-                                                {isVideoClip ? '🎬 Video en Movimiento' : '🎨 Imagen IA 9:16'}
+                                                {isVideoClip ? '🎬 Video en Movimiento' : isNewsCard ? '📰 Tarjeta informativa' : '🎨 Imagen IA 9:16'}
                                             </Badge>
                                             <span className="text-xs text-muted-foreground">
                                                 ⏱ {scene.duration.toFixed(1)}s

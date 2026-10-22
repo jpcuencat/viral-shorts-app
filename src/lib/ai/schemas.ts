@@ -59,6 +59,19 @@ export const SceneVisualPlanSchema = z.looseObject({
 })
 export const SceneVisualPlanListSchema = z.array(SceneVisualPlanSchema)
 
+/** Plan visual completo del reel: tipo de tema + estrategia visual por escena. */
+export const StoryboardPlanSchema = z.looseObject({
+    topic_type: z.enum(['news_real_people', 'news_event', 'evergreen']).catch('evergreen'),
+    location_label: z.string().optional().catch(undefined),
+    scenes: z.array(SceneVisualPlanSchema.extend({
+        visual_strategy: z.enum(['real_footage', 'news_card', 'ai_image']).optional().catch(undefined),
+        card_kicker: z.string().optional().catch(undefined),
+        card_headline: z.string().optional().catch(undefined),
+        card_detail: z.string().optional().catch(undefined),
+    })).min(1),
+})
+export type StoryboardPlan = z.infer<typeof StoryboardPlanSchema>
+
 export const QualityAuditSchema = z.looseObject({
     score: score,
     weakestSceneIndex: z.coerce.number().int().min(0).catch(0),

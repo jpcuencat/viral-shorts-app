@@ -1,9 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { videoService } from '@/services/video-service'
-import { imageService, VisualGenerationMode } from '@/services/image-service'
+import { imageService, VisualGenerationMode, type VisualResult } from '@/services/image-service'
+import { cardService } from '@/services/card-service'
 import { audioService } from '@/services/audio-service'
 import { generateJson } from '@/lib/ai/gemini'
-import { SceneVisualPlanListSchema, QualityAuditSchema, type QualityAudit } from '@/lib/ai/schemas'
+import { StoryboardPlanSchema, QualityAuditSchema, type QualityAudit } from '@/lib/ai/schemas'
 import { subtitleService } from '@/services/subtitle-service'
 import { saveSceneManifest, type SceneManifestEntry } from '@/lib/scene-store'
 import { JobCancelledError, type ProgressReporter } from '@/lib/jobs/types'
@@ -57,7 +58,11 @@ El video tiene ${scenes.length} escenas; se muestran ${sampled.length}.
 CRITERIOS (0 a 100 puntos, sé estricto y honesto; NO infles la nota):
 1. FORMATO Y COMPOSICIÓN (30 pts): nitidez, encuadre vertical, sin bandas negras ni deformaciones.
 2. SUBTÍTULOS Y LEGIBILIDAD (35 pts): legibles, bien contrastados, sin tapar el sujeto.
-3. COHERENCIA VISUAL CON EL TEMA "${ideaTitle}" (35 pts): el visual corresponde a la narración de esa escena; penaliza imágenes genéricas, anatomía distorsionada, texto ilegible o protagonistas equivocados.
+3. COHERENCIA VISUAL CON EL TEMA "${ideaTitle}" (35 pts): el visual corresponde a la narración de esa escena; penaliza imágenes genéricas, anatomía distorsionada, texto ilegible, elementos de otro país o protagonistas equivocados.
+
+NOTA: las "tarjetas informativas" (fondo de marca con etiqueta, titular y dato en texto) son un recurso editorial INTENCIONAL
+para noticias, como en los canales informativos profesionales: no las penalices por "no ser imagen"; evalúa su legibilidad,
+jerarquía visual y coherencia con la narración. El metraje horizontal se muestra a propósito sobre su propio fondo desenfocado.
 
 En "weakestSceneIndex" pon el ÍNDICE ORIGINAL de escena (el número indicado en cada frame) peor evaluado, y en "improvedVisualPrompt" un prompt en inglés para regenerarla.`
     ]
@@ -282,53 +287,79 @@ export async function runReelPipeline(params: {
                 hf_prompt: string
                 shows_real_person?: boolean
                 person_free_prompt?: string
+                visual_strategy?: 'real_footage' | 'news_card' | 'ai_image'
+                card_kicker?: string
+                card_headline?: string
+                card_detail?: string
+            }
+            const factCheck = (content.fact_check || null) as null | {
+                verified?: boolean; domains?: string[]; location?: string; event_date?: string
             }
             let visualPlans: SceneVisualPlan[] = []
+            let topicType: 'news_real_people' | 'news_event' | 'evergreen' =
+                factCheck?.verified ? 'news_event' : 'evergreen'
+            let locationLabel: string | undefined = factCheck?.location
             const defaultSubjectKey = (content.protagonist_en || ideaTitle).slice(0, 35)
 
             try {
                 const protagonistHint = content.protagonist_en || ideaTitle
-                const plannerPrompt = `You are a Master Storyboard Director for a viral Short.
+                const plannerPrompt = `You are the visual director of a short-form NEWS & explainer channel for a Spanish-speaking audience.
 TOPIC TITLE: "${ideaTitle}"
 TOPIC DESCRIPTION: "${ideaDesc}"
-PROTAGONIST / MAIN SUBJECT: "${protagonistHint}"
+MAIN SUBJECT: "${protagonistHint}"
 CATEGORY: "${ideaCategory}"
+${factCheck?.verified ? `VERIFIED FACTS AVAILABLE (sources: ${(factCheck.domains || []).join(', ')}). Card texts must only use facts stated in the narration below.` : ''}
 
-CRITICAL STORYBOARD RULES (READ CAREFULLY):
-1. PROTAGONIST & SUBJECT CONTINUITY: Every single "hf_prompt" and "yt_search_query" MUST explicitly name and show the MAIN SUBJECT / PROTAGONIST in action!
-   - STRICTLY FORBIDDEN: NEVER generate symbolic/metaphorical objects that break the story!
-2. ANATOMICALLY-SAFE FRAMING FOR ALL TOPICS (NO DISTORTED BODIES OR HANDS):
-   - Every "hf_prompt" MUST use clean waist-up medium portraits, over-the-shoulder broadcast angles, clear environmental/architectural views, or composed single-subject editorial shots.
-   - NEVER ask for tangled multi-body collisions, mid-air acrobatics, macro close-ups of hands/fingers/feet, or readable text on screens (as diffusion models distort those).
-3. SMART VAULT INDEXING:
-   - "subject_key": A short, consistent 1-3 word English identifier for the main subject of this video (e.g. "cne_ecuador", "lionel_messi", "openai_chatgpt", "quito_ecuador"). Use the SAME "subject_key" across all scenes of this video so our AI Vault groups them under this topic.
-   - "scene_tags": Array of 4 specific English keywords describing the exact pose/action/setting of THIS scene.
-   - "yt_search_query": A specific 4-6 word English YouTube search query to find real motion footage of this exact scene. Prefer queries that return news/broadcast footage of the real event or place.
-4. REAL PEOPLE RULE (MANDATORY, overrides rule 1 for those scenes):
-   - "shows_real_person": true when the scene's visual would show a specific REAL, identifiable person (a public figure, athlete, politician, a local priest, a victim, any named real individual). false for generic/anonymous people, places, objects or fictional subjects.
-   - Image generators cannot reproduce real people: they invent a different face. So for EVERY scene with shows_real_person=true, also write "person_free_prompt": an English Stable Diffusion prompt for the SAME moment WITHOUT any identifiable person — the real location (exterior/interior of the actual place), objects tied to the story (altar, candles, microphone, ballot box, stadium, jersey on a hanger), or people only from behind / far away / out of focus. Documentary photo style, natural light, no faces, no text.
-   - Never use abstract metaphors in person_free_prompt; it must be concretely tied to the narration.
+STEP 1 — "topic_type":
+- "news_real_people": a current news event centered on specific real, identifiable people (politicians, athletes, celebrities, victims, local figures).
+- "news_event": a current news event about places, institutions, disasters, sports results, etc.
+- "evergreen": explainers, curiosities, tech, how-to, history, fictional or generic subjects.
 
-For each of the ${scenesData.length} scenes below, output a JSON array of ${scenesData.length} objects:
-- "subject_key": string (consistent main subject slug).
-- "scene_tags": array of 4 specific English action/setting tags.
-- "yt_search_query": specific English YouTube search query for real motion video.
-- "hf_prompt": Clean, anatomically-safe English prompt for Stable Diffusion 3 (vertical 9:16, waist-up medium shot or editorial angle, photorealistic, cinematic lighting, no text, no tangled limbs) showing the MAIN PROTAGONIST or subject of that line.
-- "shows_real_person": boolean (see rule 4).
-- "person_free_prompt": string, required when shows_real_person is true (see rule 4).
+STEP 2 — "visual_strategy" for EACH scene:
+- "real_footage": real filmed video of the actual event, place or person (news broadcasts). Use it for the most visual moments (the place, the operation, the crowd, the match).
+- "news_card": a designed editorial text card (kicker + headline + one key fact). Use it for facts, accusations, legal details, numbers, context, reactions, open questions, and anything that cannot be shown truthfully with footage.
+- "ai_image": AI illustration. ONLY allowed when topic_type is "evergreen" AND the scene does not show a real identifiable person. NEVER use ai_image for news topics: AI cannot depict real events, real places or real people truthfully.
+For news topics aim for roughly half "real_footage" and half "news_card". The LAST scene (call to action) must be "news_card".
 
-SCENES:
+STEP 3 — fields for each scene:
+- "yt_search_query": 3-7 words in the LANGUAGE OF THE LOCAL MEDIA COVERAGE (Spanish for Ecuador, Latin America or Spain; English for the US or UK). Use the real names and the real place plus words like "noticia", "operativo", "en vivo", "video". You may add a local TV outlet (Ecuador: Ecuavisa, Teleamazonas, TC Televisión). Never include "short" or "shorts".
+- "card_kicker": Spanish, 1-3 words, max 18 characters (e.g. "ÚLTIMA HORA", "EL CASO", "QUÉ SE SABE", "REACCIONES", "¿Y AHORA?", "TU OPINIÓN").
+- "card_headline": Spanish, max 60 characters, factual, based ONLY on the scene narration. No exaggeration.
+- "card_detail": Spanish, max 110 characters, one complementary fact taken from the narration of this or other scenes. Never invent data.
+- "shows_real_person": true ONLY if the visual would show the face/body of a specific real person. Places, objects, institutions, consequences or questions are false.
+- "person_free_prompt": English Stable Diffusion prompt of the same moment WITHOUT identifiable people (only needed for ai_image scenes with shows_real_person=true).
+- "hf_prompt": English Stable Diffusion prompt (vertical 9:16, documentary photo, natural light, no text, no tangled limbs). Only used for ai_image scenes.
+- "subject_key": short consistent 1-3 word English slug for the main subject, SAME in all scenes (e.g. "luisa_gonzalez", "lionel_messi").
+- "scene_tags": 4 specific English keywords for this scene.
+Also return "location_label": Spanish "Ciudad o provincia, País" where the event happens, or "" if not applicable.
+
+SCENES (${scenesData.length}):
 ${scenesData.map((s, idx) => `${idx + 1}. Narration: "${s.text}" | Visual hint: "${s.visual}"`).join('\n')}
 
-Respond ONLY with a valid JSON array.`
-                const parsedPlans = await generateJson(plannerPrompt, SceneVisualPlanListSchema, { label: 'StoryboardPlanner' })
-                if (parsedPlans.length === scenesData.length) {
-                    visualPlans = parsedPlans
-                    console.log(`[ReelGen] AI Storyboard Director planned ${visualPlans.length} scenes (mode: ${visualMode}).`)
+Respond ONLY with JSON: {"topic_type": "...", "location_label": "...", "scenes": [exactly ${scenesData.length} objects in order]}`
+                const plan = await generateJson(plannerPrompt, StoryboardPlanSchema, { label: 'StoryboardPlanner' })
+                if (plan.scenes.length === scenesData.length) {
+                    visualPlans = plan.scenes as SceneVisualPlan[]
+                    topicType = plan.topic_type
+                    if (plan.location_label && plan.location_label.trim()) locationLabel = plan.location_label.trim()
+                    const counts = visualPlans.reduce<Record<string, number>>((acc, p) => {
+                        const k = p.visual_strategy || 'sin_estrategia'
+                        acc[k] = (acc[k] || 0) + 1
+                        return acc
+                    }, {})
+                    console.log(`[ReelGen] Plan: tema=${topicType}, lugar=${locationLabel || '-'}, estrategias=${JSON.stringify(counts)}`)
+                } else {
+                    console.warn(`[ReelGen] El planificador devolvió ${plan.scenes.length} escenas en vez de ${scenesData.length}; se usa el plan por defecto.`)
                 }
             } catch (planErr: any) {
                 console.warn(`[ReelGen] Visual planner fallback (${planErr.message})`)
             }
+            const isNewsTopic = topicType !== 'evergreen'
+            const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+            const now = new Date()
+            const dateLabel = factCheck?.event_date || `${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`
+            const sourceLabel = (factCheck?.domains || []).slice(0, 2).join(' · ') || undefined
+            const goodSourceIds: string[] = []
 
             const usedVaultFiles = new Set<string>()
             interface ProcessedScene {
@@ -348,17 +379,23 @@ Respond ONLY with a valid JSON array.`
                 realPerson: boolean
                 personFreePrompt?: string
                 sourceKind: string
+                card?: { kicker: string; headline: string; detail?: string }
             }
             const processedScenes: ProcessedScene[] = []
 
             for (let i = 0; i < scenesData.length; i++) {
                 const scene = scenesData[i]
-                const plan = visualPlans[i] || {
+                const plan: SceneVisualPlan = visualPlans[i] || {
                     subject_key: defaultSubjectKey,
                     scene_tags: [ideaCategory || 'viral', `scene_${i + 1}`],
-                    yt_search_query: `${content.protagonist_en || ideaTitle} ${scene.visual}`.slice(0, 60),
-                    hf_prompt: `Vertical 9:16 photorealistic action shot of ${content.protagonist_en || ideaTitle}: ${scene.visual}, dramatic lighting, 8k, no text`
+                    yt_search_query: `${ideaTitle} noticia`.slice(0, 80),
+                    hf_prompt: `Vertical 9:16 photorealistic action shot of ${content.protagonist_en || ideaTitle}: ${scene.visual}, dramatic lighting, 8k, no text`,
+                    visual_strategy: isNewsTopic ? (i % 2 === 0 && i < scenesData.length - 1 ? 'real_footage' : 'news_card') : undefined,
                 }
+                // Estrategia efectiva: en noticias NUNCA imagen IA (metraje real o tarjeta informativa)
+                const strategy: 'real_footage' | 'news_card' | 'default' = isNewsTopic
+                    ? (plan.visual_strategy === 'real_footage' ? 'real_footage' : 'news_card')
+                    : (plan.visual_strategy === 'news_card' ? 'news_card' : 'default')
 
                 await report(10 + Math.round((60 * i) / scenesData.length), `Escena ${i + 1} de ${scenesData.length}`, 'Voz, subtítulos y visual')
                 // A. Generate Audio + WordBoundary Timestamps (with selected voiceId, e.g. es-EC-LuisNeural)
@@ -372,21 +409,48 @@ Respond ONLY with a valid JSON array.`
                 // B. SMART AI & VIDEO VAULT: Supports 'hybrid', 'real_video' (YouTube B-Roll / Custom Video), and 'ai_images' (HuggingFace SD3)
                 const enhancedPrompt = `${plan.hf_prompt}, vertical 9:16 aspect ratio, ultra-detailed action photography, cinematic lighting, photorealistic 8k, high contrast, no text, no letters, no watermark`
 
-                const vaultResult = await imageService.generateOrGetFromVault({
-                    prompt: enhancedPrompt,
-                    videoSearchQuery: plan.yt_search_query,
-                    visualMode,
-                    customVideoSource: customVideoSource.trim() || undefined,
-                    sceneIndex: i,
-                    durationSec: duration,
-                    category: ideaCategory || 'general',
-                    subjectKey: plan.subject_key || defaultSubjectKey,
-                    sceneTags: plan.scene_tags || [],
-                    usedFiles: usedVaultFiles,
-                    realPerson: Boolean(plan.shows_real_person),
-                    personFreePrompt: plan.person_free_prompt
-                })
-                console.log(`[ReelGen] Escena ${i + 1}: ${vaultResult.kind}${plan.shows_real_person ? ' (persona real)' : ''} -> ${vaultResult.sourceLabel}`)
+                let vaultResult: VisualResult | null = null
+                const hasCustomVideo = Boolean(customVideoSource.trim())
+
+                if (strategy === 'real_footage' && !hasCustomVideo && visualMode !== 'ai_images') {
+                    // Metraje real: primero tramos nuevos de fuentes que ya pasaron el filtro en este reel
+                    vaultResult = await imageService.fetchRealVideoClipToVault({
+                        searchQuery: plan.yt_search_query,
+                        sceneIndex: i,
+                        durationSec: duration,
+                        category: ideaCategory || 'general',
+                        subjectKey: plan.subject_key || defaultSubjectKey,
+                        sceneTags: plan.scene_tags || [],
+                        usedFiles: usedVaultFiles,
+                        preferredSourceIds: goodSourceIds,
+                    })
+                    if (vaultResult?.sourceVideoId && !goodSourceIds.includes(vaultResult.sourceVideoId)) {
+                        goodSourceIds.push(vaultResult.sourceVideoId)
+                    }
+                }
+
+                if (!vaultResult && (strategy === 'news_card' || strategy === 'real_footage') && !(hasCustomVideo && strategy === 'real_footage')) {
+                    // Tarjeta informativa: se renderiza al final (para usar de fondo el metraje real del propio reel)
+                    vaultResult = { imagePath: '', sourceLabel: 'Tarjeta informativa', fromVault: false, kind: 'news_card' }
+                }
+
+                if (!vaultResult) {
+                    vaultResult = await imageService.generateOrGetFromVault({
+                        prompt: enhancedPrompt,
+                        videoSearchQuery: plan.yt_search_query,
+                        visualMode,
+                        customVideoSource: customVideoSource.trim() || undefined,
+                        sceneIndex: i,
+                        durationSec: duration,
+                        category: ideaCategory || 'general',
+                        subjectKey: plan.subject_key || defaultSubjectKey,
+                        sceneTags: plan.scene_tags || [],
+                        usedFiles: usedVaultFiles,
+                        realPerson: Boolean(plan.shows_real_person),
+                        personFreePrompt: plan.person_free_prompt
+                    })
+                }
+                console.log(`[ReelGen] Escena ${i + 1}: ${strategy} -> ${vaultResult.kind}${plan.shows_real_person ? ' (persona real)' : ''} · ${vaultResult.sourceLabel}`)
 
                 const imagePath = vaultResult.imagePath
                 const imageUrl = vaultResult.sourceLabel
@@ -413,8 +477,37 @@ Respond ONLY with a valid JSON array.`
                     category: ideaCategory || 'general',
                     realPerson: Boolean(plan.shows_real_person),
                     personFreePrompt: plan.person_free_prompt,
-                    sourceKind: vaultResult.kind
+                    sourceKind: vaultResult.kind,
+                    card: vaultResult.kind === 'news_card' ? {
+                        kicker: plan.card_kicker || (i === scenesData.length - 1 ? 'TU OPINIÓN' : i === 0 ? 'ÚLTIMA HORA' : 'QUÉ SE SABE'),
+                        headline: plan.card_headline || scene.caption || scene.text.split(' ').slice(0, 9).join(' '),
+                        detail: plan.card_detail,
+                    } : undefined
                 })
+            }
+
+            // 4.2 TARJETAS INFORMATIVAS: fondo = metraje real limpio del propio reel (coherencia visual) o degradado de marca
+            const cardScenes = processedScenes.filter(sc => sc.sourceKind === 'news_card')
+            if (cardScenes.length > 0) {
+                await report(70, 'Diseñando tarjetas informativas', `${cardScenes.length} tarjeta(s)`)
+                const backgroundMedia = processedScenes.find(sc => sc.sourceKind === 'real_video')?.imagePath
+                let variant = 0
+                for (const sc of processedScenes) {
+                    if (sc.sourceKind !== 'news_card' || !sc.card) continue
+                    sc.imagePath = await cardService.renderNewsCard({
+                        kicker: sc.card.kicker,
+                        headline: sc.card.headline,
+                        detail: sc.card.detail,
+                        location: locationLabel,
+                        dateLabel,
+                        sourceLabel,
+                        backgroundMedia,
+                        variant: variant++,
+                    })
+                    const publicDirCards = path.join(process.cwd(), 'public')
+                    sc.publicMediaUrl = '/' + path.relative(publicDirCards, sc.imagePath).replace(/\\/g, '/')
+                    sc.imageUrl = `Tarjeta informativa: ${sc.card.headline}`
+                }
             }
 
             await report(72, 'Montando el video', 'FFmpeg: escenas, música y sonoridad')
@@ -488,11 +581,38 @@ Respond ONLY with a valid JSON array.`
                     console.log(`[ReelGen] ${qualityScore} < ${QUALITY_HEAL_THRESHOLD}: regenerando escena ${weakIdx + 1}...`)
                     await report(86, 'Mejorando la escena más débil', `Nota inicial ${qualityScore}/100; regenerando escena ${weakIdx + 1}`)
                     try {
-                        // Regla de personas reales: si la escena muestra a una persona real, se busca otro clip real
-                        // (o, si no hay, una imagen IA sin personas); nunca una cara inventada.
+                        // NOTICIAS: nunca se "arregla" con IA. Metraje real de una fuente ya validada u otra búsqueda;
+                        // si no hay, tarjeta informativa. TEMAS ATEMPORALES: regla de personas reales como antes.
                         const healMode: VisualGenerationMode =
                             targetScene.realPerson && visualMode !== 'ai_images' ? 'real_video' : 'ai_images'
-                        const healedVault = await imageService.generateOrGetFromVault({
+                        let healedVault: VisualResult | null = null
+                        if (isNewsTopic) {
+                            if (targetScene.sourceKind !== 'news_card' && visualMode !== 'ai_images') {
+                                healedVault = await imageService.fetchRealVideoClipToVault({
+                                    searchQuery: targetScene.ytSearchQuery,
+                                    sceneIndex: weakIdx + 3,
+                                    durationSec: targetScene.duration,
+                                    category: targetScene.category,
+                                    subjectKey: targetScene.subjectKey,
+                                    sceneTags: targetScene.sceneTags,
+                                    usedFiles: usedVaultFiles,
+                                    preferredSourceIds: goodSourceIds,
+                                })
+                            }
+                            if (!healedVault) {
+                                const bg = processedScenes.find((sc, k) => k !== weakIdx && sc.sourceKind === 'real_video')?.imagePath
+                                const card = targetScene.card || {
+                                    kicker: 'QUÉ SE SABE',
+                                    headline: targetScene.sceneData.caption || targetScene.sceneData.text.split(' ').slice(0, 9).join(' '),
+                                }
+                                const cardPath = await cardService.renderNewsCard({
+                                    ...card, location: locationLabel, dateLabel, sourceLabel, backgroundMedia: bg, variant: weakIdx + 1,
+                                })
+                                healedVault = { imagePath: cardPath, sourceLabel: `Tarjeta informativa: ${card.headline}`, fromVault: false, kind: 'news_card' }
+                                targetScene.card = card
+                            }
+                        }
+                        if (!healedVault) healedVault = await imageService.generateOrGetFromVault({
                             prompt: `${healedPrompt}, vertical 9:16 aspect ratio, ultra-detailed editorial photography, cinematic lighting, photorealistic, high contrast, no text`,
                             videoSearchQuery: targetScene.ytSearchQuery,
                             visualMode: healMode,

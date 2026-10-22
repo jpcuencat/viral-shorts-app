@@ -7,22 +7,22 @@ import { promisify } from 'util'
 import { randomUUID as uuidv4 } from 'crypto'
 import { generateJson } from '@/lib/ai/gemini'
 import { ClipRelevanceSchema } from '@/lib/ai/schemas'
-import { FFMPEG_PATH, FFPROBE_PATH, YTDLP_PATH } from '@/lib/media-config'
+import { FFMPEG_PATH, FFPROBE_PATH, YTDLP_PATH, BROADCAST_SAFE_CROP } from '@/lib/media-config'
 import { vaultStore, type VaultEntry } from '@/lib/vault-store'
 
 const execFileAsync = promisify(execFile)
 const ffmpegPath = FFMPEG_PATH
 
 /** Versión del filtro visual. Los clips del vault validados con una versión anterior se re-validan antes de reutilizarse. */
-const CLIP_GATE_VERSION = 'v2'
-/** Intentos máximos de descarga de clips por escena (cada intento rechazado se excluye del siguiente). */
-const MAX_CLIP_ATTEMPTS = 4
+const CLIP_GATE_VERSION = 'v3'
+/** Intentos máximos de descarga de clips nuevos por escena (cada intento rechazado se excluye del siguiente). */
+const MAX_CLIP_ATTEMPTS = 2
 
 export type { VaultEntry }
 
 export type VisualGenerationMode = 'hybrid' | 'real_video' | 'ai_images'
 
-export type VisualSourceKind = 'custom_video' | 'real_video' | 'ai_image'
+export type VisualSourceKind = 'custom_video' | 'real_video' | 'ai_image' | 'news_card'
 
 export interface VisualResult {
     imagePath: string
@@ -30,6 +30,8 @@ export interface VisualResult {
     fromVault: boolean
     videoStartTime?: number
     kind: VisualSourceKind
+    /** Id del video de YouTube de origen (para reutilizar otros tramos de una fuente ya validada). */
+    sourceVideoId?: string
 }
 
 class ImageService {
@@ -80,7 +82,8 @@ class ImageService {
             if (usedFiles.has(entry.fileName) || opts.skip?.has(entry.fileName)) continue
             const entryType = entry.mediaType || (entry.fileName.endsWith('.mp4') ? 'video' : 'image')
             if (preferredMediaType && entryType !== preferredMediaType) continue
-            if (entryType === 'video' && entry.clipCheck?.endsWith('-rejected')) continue
+            // Solo se descartan los rechazados por la versión ACTUAL del filtro (los antiguos se re-evalúan)
+            if (entryType === 'video' && entry.clipCheck === `${CLIP_GATE_VERSION}-rejected`) continue
             if (entryType === 'image' && opts.requirePersonFree && !entry.personFree) continue
 
             const fullPath = path.join(this.vaultDir, entry.fileName)
@@ -190,7 +193,8 @@ class ImageService {
                 const framePath = path.join(this.tempDir, `gate_${uuidv4().slice(0, 8)}.jpg`)
                 await execFileAsync(ffmpegPath, [
                     '-y', '-ss', (duration * frac).toFixed(2), '-i', videoPath,
-                    '-frames:v', '1', '-vf', 'scale=768:-2', '-q:v', '3', framePath
+                    // Horizontales: se evalúa la imagen YA recortada, que es lo que se verá en el reel
+                    '-frames:v', '1', '-vf', width > height ? `${BROADCAST_SAFE_CROP},scale=768:-2` : 'scale=768:-2', '-q:v', '3', framePath
                 ], { timeout: 15000 })
                 if (fsSync.existsSync(framePath)) framePaths.push(framePath)
             }
@@ -198,13 +202,15 @@ class ImageService {
 
             const cleanSubject = subjectKey.replace(/_/g, ' ')
             const parts: any[] = [
-                `You are a STRICT footage gate for a vertical short video about "${cleanSubject}" (scene query: "${searchQuery}").
-Our app burns its OWN subtitles and graphics on top, so the source footage must be CLEAN.
-You will see ${framePaths.length} frames from the same clip (start, middle, end).
+                `You are a footage gate for a vertical short video about "${cleanSubject}" (scene query: "${searchQuery}").
+Our app burns its OWN subtitles and graphics on top, so the visible footage must be CLEAN.
+You will see ${framePaths.length} frames from the same clip (start, middle, end). For horizontal footage these frames are
+ALREADY CROPPED to exactly the area that will be shown (corner channel logos and bottom tickers of TV news are cut away).
+Judge ONLY what is visible in these frames.
 
-Set "has_overlay_text": true if ANY frame shows text added in post-production: titles, headlines, burned-in subtitles or captions, news lower-thirds, tickers/chyrons, quotes, hashtags, emoji stickers, "subscribe/like" prompts, end screens.
-(Text that physically exists in the filmed scene — a street sign, a banner on a wall, a jersey number, a stadium scoreboard — does NOT count.)
-Set "has_logo_or_watermark": true if ANY frame shows a TV/channel logo or bug, a watermark, a social-media handle or a creator's branding.
+Set "has_overlay_text": true if ANY frame clearly shows legible text added in post-production: titles, headlines, burned-in subtitles or captions, lower-thirds, tickers, quotes, hashtags, emoji stickers, "subscribe/like" prompts, end screens.
+(Text that physically exists in the filmed scene — a street sign, a banner, a uniform patch, a jersey number, a scoreboard — does NOT count. A tiny unreadable fragment cut at the very edge does NOT count.)
+Set "has_logo_or_watermark": true if ANY frame clearly shows a TV/channel logo, a watermark, a social-media handle or a creator's branding (tiny unreadable fragments at the very edge do NOT count).
 Set "is_relevant": true only if the footage is real filmed video coherent with "${cleanSubject}" (not a meme, cartoon, video game, slideshow of stills with graphics, split screen, picture-in-picture, or a phone/screen recording) AND every frame is usable: not mostly black, not a glitch/transition effect, not heavily motion-blurred, not a vertical video pillarboxed inside a horizontal frame.
 Set "valid": true ONLY if has_overlay_text=false AND has_logo_or_watermark=false AND is_relevant=true.
 
@@ -240,8 +246,11 @@ Respond ONLY with JSON: {"valid": bool, "has_overlay_text": bool, "has_logo_or_w
         subjectKey: string
         sceneTags: string[]
         usedFiles: Set<string>
+        /** Videos de YouTube que ya pasaron el filtro en este reel: se prueban otros tramos antes de buscar nuevos. */
+        preferredSourceIds?: string[]
     }): Promise<VisualResult | null> {
         const { searchQuery, customUrl, sceneIndex, durationSec, category, subjectKey, sceneTags, usedFiles } = params
+        const preferredSourceIds = (params.preferredSourceIds || []).slice(0, 2)
 
         // 1. Reutilizar clips del vault (re-validando los que no pasaron por el filtro v2)
         if (!customUrl) {
@@ -267,7 +276,8 @@ Respond ONLY with JSON: {"valid": bool, "has_overlay_text": bool, "has_logo_or_w
                     imagePath: cached.filePath,
                     sourceLabel: `Vault Video (Reused): ${cached.fileName}`,
                     fromVault: true,
-                    kind: 'real_video'
+                    kind: 'real_video',
+                    sourceVideoId: cached.sourceVideoId
                 }
             }
         }
@@ -280,20 +290,31 @@ Respond ONLY with JSON: {"valid": bool, "has_overlay_text": bool, "has_logo_or_w
 
         const clipLen = Math.max(5, Math.ceil(durationSec + 1.5))
         const cleanSubjectWords = subjectKey.replace(/_/g, ' ')
-        const queries = customUrl && customUrl.startsWith('http')
-            ? [customUrl]
+        // Objetivos en orden: (1) otros tramos de fuentes ya validadas en este reel, (2) búsquedas nuevas
+        type Target = { input: string; direct: boolean }
+        const targets: Target[] = customUrl && customUrl.startsWith('http')
+            ? [{ input: customUrl, direct: true }]
             : [
-                `ytsearch10:${searchQuery}`,
-                `ytsearch10:${cleanSubjectWords} ${sceneTags.slice(0, 2).join(' ').replace(/_/g, ' ')} noticia video`
+                ...preferredSourceIds.map(id => ({ input: `https://www.youtube.com/watch?v=${id}`, direct: true })),
+                { input: `ytsearch10:${searchQuery}`, direct: false },
+                { input: `ytsearch10:${searchQuery.replace(/\b(video|en vivo)\b/gi, '').trim()} noticia`, direct: false },
             ]
+        void cleanSubjectWords
 
         const rejectedIds = new Set<string>()
         let attempts = 0
 
-        for (const targetInput of queries) {
-            while (attempts < MAX_CLIP_ATTEMPTS) {
-                attempts++
-                const startSec = customUrl ? 8 + sceneIndex * (clipLen + 4) : 18 + (sceneIndex % 5) * 8
+        for (const target of targets) {
+            const targetInput = target.input
+            const isPreferred = target.direct && !customUrl
+            while (isPreferred || attempts < MAX_CLIP_ATTEMPTS) {
+                if (!isPreferred) attempts++
+                // Fuentes ya validadas: un tramo distinto por escena para no repetir imágenes
+                const startSec = customUrl
+                    ? 8 + sceneIndex * (clipLen + 4)
+                    : isPreferred
+                        ? 20 + sceneIndex * (clipLen + 6)
+                        : 18 + (sceneIndex % 5) * 8
                 const baseName = `${safeCat}-${safeSubj}-${safeTagSlug}_${uuidv4().slice(0, 6)}`
                 const outputTemplate = path.join(this.vaultDir, `${baseName}.%(id)s.%(ext)s`)
 
@@ -308,7 +329,7 @@ Respond ONLY with JSON: {"valid": bool, "has_overlay_text": bool, "has_logo_or_w
                     '--force-overwrites',
                     '-o', outputTemplate
                 ]
-                if (!customUrl) {
+                if (!target.direct) {
                     // Solo videos horizontales (>60 s, no en vivo) y excluyendo los ya rechazados
                     const exclude = [...rejectedIds].map(id => ` & id != '${id}'`).join('')
                     args.push('--match-filter', `duration > 60 & duration < 1800 & !is_live & aspect_ratio >? 1.2${exclude}`)
@@ -325,7 +346,7 @@ Respond ONLY with JSON: {"valid": bool, "has_overlay_text": bool, "has_logo_or_w
                 const produced = fsSync.readdirSync(this.vaultDir).find(f => f.startsWith(`${baseName}.`) && f.endsWith('.mp4'))
                 if (!produced) {
                     console.warn(`[RealVideo] Sin resultados válidos para "${targetInput}".`)
-                    break // pasar a la siguiente consulta
+                    break // pasar al siguiente objetivo
                 }
 
                 const outputPath = path.join(this.vaultDir, produced)
@@ -334,7 +355,7 @@ Respond ONLY with JSON: {"valid": bool, "has_overlay_text": bool, "has_logo_or_w
                 if (fsSync.statSync(outputPath).size < 15000) {
                     await fs.unlink(outputPath).catch(() => { })
                     rejectedIds.add(videoId)
-                    if (customUrl) break
+                    if (target.direct) break
                     continue
                 }
 
@@ -343,7 +364,7 @@ Respond ONLY with JSON: {"valid": bool, "has_overlay_text": bool, "has_logo_or_w
                     console.warn(`[ClipGate] Rechazado ${videoId}: ${check.reason}`)
                     await fs.unlink(outputPath).catch(() => { })
                     rejectedIds.add(videoId)
-                    if (customUrl) break
+                    if (target.direct) break // un solo intento por fuente directa (evita bucles)
                     continue
                 }
 
@@ -370,9 +391,12 @@ Respond ONLY with JSON: {"valid": bool, "has_overlay_text": bool, "has_logo_or_w
                 console.log(`[AIVault] Clip limpio verificado y guardado: ${fileName}`)
                 return {
                     imagePath: finalPath,
-                    sourceLabel: customUrl ? `Custom YouTube Clip: ${fileName}` : `YouTube B-Roll (Clean v2): ${fileName}`,
+                    sourceLabel: customUrl
+                        ? `Custom YouTube Clip: ${fileName}`
+                        : `YouTube B-Roll (${isPreferred ? 'misma fuente, otro tramo' : `Clean ${CLIP_GATE_VERSION}`}): ${fileName}`,
                     fromVault: false,
-                    kind: 'real_video'
+                    kind: 'real_video',
+                    sourceVideoId: videoId
                 }
             }
             if (attempts >= MAX_CLIP_ATTEMPTS) break

@@ -20,6 +20,16 @@ export const jsonModel = genAI.getGenerativeModel({
     generationConfig: { responseMimeType: 'application/json' }
 })
 
+/**
+ * Modelo con búsqueda en Google (grounding) para verificar hechos de actualidad.
+ * El SDK 0.24 solo tipa la herramienta antigua (googleSearchRetrieval); los modelos 2.x/3.x usan
+ * `googleSearch`, que el SDK reenvía tal cual a la API.
+ */
+export const groundedModel = genAI.getGenerativeModel({
+    model: GEMINI_MODEL,
+    tools: [{ googleSearch: {} } as any],
+})
+
 /** Extrae JSON aunque el modelo lo envuelva en ```json ... ``` o agregue texto alrededor. */
 export function extractJson(raw: string): unknown {
     const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim()

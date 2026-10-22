@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { generateJson } from '@/lib/ai/gemini'
 import { ScriptResponseSchema } from '@/lib/ai/schemas'
+import { researchFacts } from '@/lib/ai/fact-check'
 
 /**
  * Genera y guarda el guion de una idea. Recibe el cliente de base de datos para poder ejecutarse
@@ -27,6 +28,32 @@ export async function generateScriptForIdea(
     }
 
     try {
+        // 1.B VERIFICACIÓN DE HECHOS con Google: el guion solo puede afirmar lo confirmado por fuentes
+        const facts = await researchFacts({
+            title: idea.title,
+            description: idea.description || undefined,
+            trendTitle: idea.ai_metadata?.matched_trend,
+            trendLink: idea.ai_metadata?.trend_link,
+        })
+        const factSection = facts.verified
+            ? `
+      INFORMACIÓN VERIFICADA (investigación en Google; ÚNICA base factual permitida):
+      ${facts.brief.split('\n').join('\n      ')}
+      Fuentes: ${facts.domains.join(', ') || 'medios citados arriba'}
+
+      REGLAS DE VERACIDAD (OBLIGATORIAS, por encima de cualquier otra instrucción):
+      1. Todo dato concreto (nombres, cargos, cifras, lugares, fechas, acusaciones, reacciones) debe estar en INFORMACIÓN VERIFICADA. Si no está, NO lo digas.
+      2. Atribuye acusaciones y cargos ("según la Fiscalía", "según medios como Primicias") y usa "presunto/presunta". Nunca presentes una acusación como hecho probado.
+      3. No inventes reacciones, protestas, movilizaciones, cifras ni consecuencias. Lo que aún no se sabe, dilo así ("aún no se conoce…") o no lo menciones.
+      4. Gancho llamativo pero fiel a los hechos: nada de "shock", "escándalo" o exageraciones que los hechos no respalden.
+      5. Si algo está en "NO CONFIRMADO", solo puedes mencionarlo diciendo explícitamente que no está confirmado.
+`
+            : `
+      AVISO DE VERACIDAD: no se encontró información verificable sobre este tema en fuentes fiables.
+      Escribe un guion explicativo o de contexto general. NO afirmes hechos concretos de actualidad
+      (detenciones, acusaciones, cifras, declaraciones) sobre personas reales ni instituciones.
+`
+
         // 2. Construct the Prompt (Visual Storyboard & Direct Protagonist Focus)
         const prompt = `
       Actúa como un Director y Guionista Experto en YouTube Shorts y TikTok.
@@ -36,6 +63,7 @@ export async function generateScriptForIdea(
       - Título: "${idea.title}"
       - Descripción: "${idea.description}"
       - Categoría: "${idea.categories?.name || 'General'}"
+      ${factSection}
       ${idea.ai_metadata?.parent_idea_title ? `- VIDEO DE SEGUIMIENTO / CONTINUACIÓN DE: "${idea.ai_metadata.parent_idea_title}" (Ángulo: ${idea.ai_metadata?.follow_up_angle || 'Parte 2'}). Profundiza en este nuevo ángulo sin repetir lo obvio.` : ''}
       
       INSTRUCCIONES CRÍTICAS DE NARRACIÓN Y RITMO (MUY IMPORTANTE):
@@ -89,6 +117,17 @@ export async function generateScriptForIdea(
         // 3. Call Gemini
         const scriptData = await generateJson(prompt, ScriptResponseSchema, { label: 'GenerateScript' })
 
+        // Guardar la verificación junto al guion (la usan las tarjetas informativas y la descripción)
+        ;(scriptData.content as Record<string, unknown>).fact_check = {
+            verified: facts.verified,
+            domains: facts.domains,
+            sources: facts.sources,
+            location: facts.location,
+            event_date: facts.eventDate,
+            checked_at: facts.checkedAt,
+        }
+        const sourcesLine = facts.verified && facts.domains.length > 0 ? `\n\nFuentes: ${facts.domains.join(', ')}` : ''
+
         // 4. Save to Database
         const { data: script, error: insertError } = await supabase
             .from('scripts')
@@ -96,7 +135,7 @@ export async function generateScriptForIdea(
                 idea_id: ideaId,
                 content: JSON.stringify(scriptData.content),
                 seo_title: scriptData.seo_title,
-                seo_description: scriptData.seo_description,
+                seo_description: `${scriptData.seo_description}${sourcesLine}`,
                 hashtags: scriptData.hashtags,
                 estimated_duration: scriptData.estimated_duration,
                 status: 'draft',

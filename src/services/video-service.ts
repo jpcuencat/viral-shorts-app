@@ -3,7 +3,7 @@ import path from 'path'
 import fs from 'fs/promises'
 import { randomUUID as uuidv4 } from 'crypto'
 
-import { FFMPEG_PATH, FFPROBE_PATH, SUBTITLE_FONT_FILE, MUSIC_VOLUME, TARGET_LUFS, escapeFilterPath } from '@/lib/media-config'
+import { FFMPEG_PATH, FFPROBE_PATH, SUBTITLE_FONT_FILE, MUSIC_VOLUME, TARGET_LUFS, BROADCAST_SAFE_CROP, escapeFilterPath } from '@/lib/media-config'
 
 // Rutas multiplataforma (variables de entorno → binarios del proyecto → PATH del sistema)
 ffmpeg.setFfmpegPath(FFMPEG_PATH)
@@ -164,11 +164,11 @@ class VideoService {
             const isHorizontal = dims.width > dims.height
 
             if (isHorizontal) {
-                // SMART BROADCAST 9:16 CINEMA CANVAS FOR 16:9 VIDEOS:
-                // Fills ~70% of the vertical 9:16 frame with sharp action (no tiny letterbox strip)
-                // over a darkened cinema-blurred 9:16 background + subtle dark lower-third for subtitle contrast.
+                // Metraje horizontal (noticieros): primero el recorte broadcast-safe (sin logos de esquina ni
+                // cintillos inferiores), luego primer plano nítido de 960 px de alto sobre fondo desenfocado
+                // del mismo clip, dejando libre la franja de subtítulos.
                 filters.push(
-                    `split[bg][fg];[bg]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},gblur=sigma=28,eq=brightness=-0.30[bgblur];[fg]scale=2040:-2,crop=${width}:ih[fgsharp];[bgblur][fgsharp]overlay=(W-w)/2:(H-h)/2-110,drawbox=x=0:y=1400:w=${width}:h=520:color=black@0.32:t=fill`
+                    `split[bg][fg];[bg]${BROADCAST_SAFE_CROP},scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},gblur=sigma=28,eq=brightness=-0.30[bgblur];[fg]${BROADCAST_SAFE_CROP},scale=-2:960,crop='min(iw,${width})':ih[fgsharp];[bgblur][fgsharp]overlay=(W-w)/2:(H-h)/2-110,drawbox=x=0:y=1400:w=${width}:h=520:color=black@0.32:t=fill`
                 )
             } else {
                 // Native vertical 9:16 video clip + subtle lower-third contrast band for subtitles
@@ -185,7 +185,10 @@ class VideoService {
             filters.push(`scale=${width}:${height}:force_original_aspect_ratio=increase`)
             filters.push(`crop=${width}:${height}`)
             filters.push(`setsar=1`)
-            filters.push(`zoompan=z='min(zoom+0.0015,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=${width}x${height}:fps=${fps}`)
+            // Tarjetas informativas: zoom muy suave (máx. 3%) para no cortar el texto de los márgenes
+            const isNewsCard = path.basename(imagePath).startsWith('card_')
+            const zoomExpr = isNewsCard ? 'min(zoom+0.0004,1.03)' : 'min(zoom+0.0015,1.15)'
+            filters.push(`zoompan=z='${zoomExpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=${width}x${height}:fps=${fps}`)
             filters.push(`drawbox=x=0:y=1420:w=${width}:h=500:color=black@0.25:t=fill`)
             filters.push(`setsar=1`)
             filters.push(`setpts=PTS-STARTPTS`)
