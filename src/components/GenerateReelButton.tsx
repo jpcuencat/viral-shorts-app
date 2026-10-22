@@ -31,7 +31,9 @@ interface GenerateReelButtonProps {
 }
 
 export function GenerateReelButton({ scriptId, ideaTitle = 'Viral Short' }: GenerateReelButtonProps) {
-    const { isGenerating, startGeneration } = useGeneration()
+    const { isScriptBusy, startGeneration } = useGeneration()
+    // Solo se bloquea si ESTE guion ya tiene una generación en cola o en curso (los demás pueden encolarse)
+    const isGenerating = isScriptBusy(scriptId)
     const [open, setOpen] = useState(false)
     const [visualMode, setVisualMode] = useState<VisualGenerationMode>('ai_images')
     const [voiceId, setVoiceId] = useState<string>('es-EC-LuisNeural')

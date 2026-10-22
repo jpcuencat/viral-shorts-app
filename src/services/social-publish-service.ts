@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 /**
  * Publicación de Reels: única vía = webhook de n8n (Railway), que publica en YouTube y demás redes
@@ -31,10 +32,21 @@ export interface PublicationRecord {
     createdAt: string
 }
 
-const DATA_DIR = path.join(process.cwd(), 'data')
-const CONFIG_PATH = path.join(DATA_DIR, 'social-config.json')
-const PUBLICATIONS_PATH = path.join(DATA_DIR, 'social-publications.json')
-const ALLOWED_CONFIG_KEYS: (keyof SocialConfig)[] = ['publicBaseUrl', 'webhookUrl', 'webhookSecret', 'defaultHashtags']
+const MAX_PUBLICATIONS_SHOWN = 100
+
+function rowToPublication(r: any): PublicationRecord {
+    return {
+        id: r.id,
+        reelId: r.reel_id,
+        scriptId: r.script_id,
+        title: r.title,
+        videoUrl: r.video_url,
+        platforms: (r.platforms || ['webhook']) as SocialPlatform[],
+        results: r.results || [],
+        scheduledAt: r.scheduled_at || undefined,
+        createdAt: r.created_at,
+    }
+}
 
 /** Extrae el ID de 11 caracteres de cualquier URL de YouTube (shorts, watch, youtu.be) o un ID directo. */
 export function extractYouTubeVideoId(input: string): string | null {
@@ -55,49 +67,84 @@ async function postToN8n(webhookUrl: string, init: RequestInit, buildBody: () =>
     return res
 }
 
+/**
+ * Configuración del webhook y el historial de publicaciones viven en Supabase (tablas app_settings y
+ * publications, con RLS por usuario). Todas las funciones reciben el cliente con la sesión del usuario.
+ */
 class SocialPublishService {
-    constructor() {
-        fs.mkdirSync(DATA_DIR, { recursive: true })
+    private async currentUserId(db: SupabaseClient): Promise<string> {
+        const { data: { user } } = await db.auth.getUser()
+        if (!user) throw new Error('Sesión no válida. Vuelve a iniciar sesión.')
+        return user.id
     }
 
-    public getConfig(): SocialConfig {
-        try {
-            if (!fs.existsSync(CONFIG_PATH)) return {}
-            const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'))
-            const clean: SocialConfig = {}
-            for (const k of ALLOWED_CONFIG_KEYS) if (raw[k] !== undefined) clean[k] = raw[k]
-            return clean
-        } catch {
-            return {}
+    public async getConfig(db: SupabaseClient): Promise<SocialConfig> {
+        const userId = await this.currentUserId(db)
+        const { data } = await db.from('app_settings').select('*').eq('user_id', userId).maybeSingle()
+        if (!data) return {}
+        return {
+            webhookUrl: data.webhook_url || undefined,
+            webhookSecret: data.webhook_secret || undefined,
+            publicBaseUrl: data.public_base_url || undefined,
+            defaultHashtags: data.default_hashtags || undefined,
         }
     }
 
-    public saveConfig(newConfig: Partial<SocialConfig>): SocialConfig {
-        const merged: SocialConfig = { ...this.getConfig() }
-        for (const k of ALLOWED_CONFIG_KEYS) if (newConfig[k] !== undefined) merged[k] = newConfig[k]
-        fs.mkdirSync(DATA_DIR, { recursive: true })
-        fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), 'utf-8')
+    public async saveConfig(db: SupabaseClient, newConfig: Partial<SocialConfig>): Promise<SocialConfig> {
+        const userId = await this.currentUserId(db)
+        const merged: SocialConfig = { ...(await this.getConfig(db)) }
+        if (newConfig.webhookUrl !== undefined) merged.webhookUrl = newConfig.webhookUrl
+        if (newConfig.webhookSecret !== undefined) merged.webhookSecret = newConfig.webhookSecret
+        if (newConfig.publicBaseUrl !== undefined) merged.publicBaseUrl = newConfig.publicBaseUrl
+        if (newConfig.defaultHashtags !== undefined) merged.defaultHashtags = newConfig.defaultHashtags
+
+        const { error } = await db.from('app_settings').upsert({
+            user_id: userId,
+            webhook_url: merged.webhookUrl?.trim() || null,
+            webhook_secret: merged.webhookSecret?.trim() || null,
+            public_base_url: merged.publicBaseUrl?.trim() || null,
+            default_hashtags: merged.defaultHashtags?.trim() || null,
+            updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id' })
+        if (error) throw new Error(`No se pudo guardar la configuración: ${error.message}`)
         return merged
     }
 
-    public getPublications(): PublicationRecord[] {
-        try {
-            if (!fs.existsSync(PUBLICATIONS_PATH)) return []
-            return JSON.parse(fs.readFileSync(PUBLICATIONS_PATH, 'utf-8'))
-        } catch {
+    public async getPublications(db: SupabaseClient): Promise<PublicationRecord[]> {
+        const { data, error } = await db
+            .from('publications')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(MAX_PUBLICATIONS_SHOWN)
+        if (error) {
+            console.warn('[SocialPublishService] No se pudo leer el historial:', error.message)
             return []
         }
+        return (data || []).map(rowToPublication)
     }
 
-    private addPublicationRecord(record: PublicationRecord) {
-        const list = this.getPublications()
-        list.unshift(record)
-        fs.writeFileSync(PUBLICATIONS_PATH, JSON.stringify(list.slice(0, 100), null, 2), 'utf-8')
+    private async addPublicationRecord(db: SupabaseClient, record: Omit<PublicationRecord, 'id' | 'createdAt'>): Promise<PublicationRecord> {
+        const userId = await this.currentUserId(db)
+        const { data, error } = await db.from('publications').insert({
+            user_id: userId,
+            reel_id: record.reelId,
+            script_id: record.scriptId,
+            title: record.title,
+            video_url: record.videoUrl,
+            platforms: record.platforms,
+            results: record.results,
+            scheduled_at: record.scheduledAt || null,
+        }).select('*').single()
+        if (error || !data) {
+            console.warn('[SocialPublishService] No se pudo registrar la publicación:', error?.message)
+            return { ...record, id: `local_${Date.now()}`, createdAt: new Date().toISOString() }
+        }
+        return rowToPublication(data)
     }
 
-    public removePublicationRecord(publicationId: string) {
-        const list = this.getPublications().filter((p) => p.id !== publicationId)
-        fs.writeFileSync(PUBLICATIONS_PATH, JSON.stringify(list, null, 2), 'utf-8')
+    public async removePublicationRecord(db: SupabaseClient, publicationId: string) {
+        const { error } = await db.from('publications').delete().eq('id', publicationId)
+        if (error) console.warn('[SocialPublishService] No se pudo borrar la publicación:', error.message)
     }
 
     private webhookHeaders(config: SocialConfig, json = false): Record<string, string> {
@@ -177,7 +224,7 @@ class SocialPublishService {
     }
 
     /** Publica o programa un Reel a través del webhook de n8n. */
-    public async publishReel(params: {
+    public async publishReel(db: SupabaseClient, params: {
         reelId: string
         scriptId: string
         videoUrl: string
@@ -188,7 +235,7 @@ class SocialPublishService {
         privacyStatus?: 'public' | 'unlisted' | 'private'
         scheduledAt?: string
     }): Promise<{ success: boolean; record: PublicationRecord }> {
-        const config = this.getConfig()
+        const config = await this.getConfig(db)
         const videoDiskPath = path.join(process.cwd(), 'public', params.videoUrl.replace(/^\//, ''))
         const results: PublicationRecord['results'] = []
 
@@ -218,8 +265,7 @@ class SocialPublishService {
             results.push({ platform: 'webhook', status: 'failed', message: err.message || 'Error publicando vía n8n' })
         }
 
-        const record: PublicationRecord = {
-            id: `pub_${Date.now()}`,
+        const record = await this.addPublicationRecord(db, {
             reelId: params.reelId,
             scriptId: params.scriptId,
             title: params.title,
@@ -227,19 +273,17 @@ class SocialPublishService {
             platforms: ['webhook'],
             results,
             scheduledAt: params.scheduledAt,
-            createdAt: new Date().toISOString()
-        }
-        this.addPublicationRecord(record)
+        })
 
         return { success: results.some((r) => r.status !== 'failed'), record }
     }
 
     /** Pide a n8n que elimine un Short de YouTube (n8n usa su propia credencial del canal). */
-    public async deleteYouTubeShort(params: {
+    public async deleteYouTubeShort(db: SupabaseClient, params: {
         videoIdOrUrl: string
         publicationId?: string
     }): Promise<{ success: boolean; videoId: string; message: string }> {
-        const config = this.getConfig()
+        const config = await this.getConfig(db)
         const cleanVideoId = extractYouTubeVideoId(params.videoIdOrUrl)
         if (!cleanVideoId) {
             throw new Error('Pega el enlace del Short de YouTube (ej. https://youtube.com/shorts/XXXX) o su ID de 11 caracteres.')
@@ -263,7 +307,7 @@ class SocialPublishService {
         }
 
         if (params.publicationId) {
-            this.removePublicationRecord(params.publicationId)
+            await this.removePublicationRecord(db, params.publicationId)
         }
 
         return {

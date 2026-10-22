@@ -8,6 +8,7 @@ import { randomUUID as uuidv4 } from 'crypto'
 import { generateJson } from '@/lib/ai/gemini'
 import { ClipRelevanceSchema } from '@/lib/ai/schemas'
 import { FFMPEG_PATH, FFPROBE_PATH, YTDLP_PATH } from '@/lib/media-config'
+import { vaultStore, type VaultEntry } from '@/lib/vault-store'
 
 const execFileAsync = promisify(execFile)
 const ffmpegPath = FFMPEG_PATH
@@ -17,22 +18,7 @@ const CLIP_GATE_VERSION = 'v2'
 /** Intentos máximos de descarga de clips por escena (cada intento rechazado se excluye del siguiente). */
 const MAX_CLIP_ATTEMPTS = 4
 
-export interface VaultEntry {
-    fileName: string
-    filePath: string
-    mediaType?: 'image' | 'video'
-    category: string
-    subjectKey: string
-    tags: string[]
-    prompt: string
-    createdAt: string
-    /** Imagen IA generada sin personas identificables (apta para escenas sobre personas reales). */
-    personFree?: boolean
-    /** Resultado del filtro visual de clips: 'v2-ok' | 'v2-rejected'. Sin valor = validado con el filtro antiguo. */
-    clipCheck?: string
-    clipCheckReason?: string
-    sourceVideoId?: string
-}
+export type { VaultEntry }
 
 export type VisualGenerationMode = 'hybrid' | 'real_video' | 'ai_images'
 
@@ -49,13 +35,11 @@ export interface VisualResult {
 class ImageService {
     private tempDir: string
     private vaultDir: string
-    private vaultIndexPath: string
     private ytDlpPath: string
 
     constructor() {
         this.tempDir = path.join(process.cwd(), 'public', 'temp')
         this.vaultDir = path.join(process.cwd(), 'public', 'ai-vault')
-        this.vaultIndexPath = path.join(this.vaultDir, 'index.json')
         this.ytDlpPath = YTDLP_PATH
 
         fs.mkdir(this.tempDir, { recursive: true }).catch(() => { })
@@ -72,31 +56,6 @@ class ImageService {
             .slice(0, 36) || 'general'
     }
 
-    private async readVaultIndex(): Promise<VaultEntry[]> {
-        try {
-            if (!fsSync.existsSync(this.vaultIndexPath)) return []
-            const raw = await fs.readFile(this.vaultIndexPath, 'utf-8')
-            const parsed = JSON.parse(raw)
-            return Array.isArray(parsed) ? parsed : []
-        } catch {
-            return []
-        }
-    }
-
-    private async writeVaultIndex(entries: VaultEntry[]): Promise<void> {
-        await fs.mkdir(this.vaultDir, { recursive: true })
-        await fs.writeFile(this.vaultIndexPath, JSON.stringify(entries, null, 2), 'utf-8')
-    }
-
-    private async updateVaultEntry(fileName: string, patch: Partial<VaultEntry>): Promise<void> {
-        const entries = await this.readVaultIndex()
-        const idx = entries.findIndex(e => e.fileName === fileName)
-        if (idx >= 0) {
-            entries[idx] = { ...entries[idx], ...patch }
-            await this.writeVaultIndex(entries)
-        }
-    }
-
     /**
      * Busca en el vault una imagen o clip del mismo sujeto con tags parecidos.
      * - Nunca devuelve clips rechazados por el filtro visual.
@@ -109,7 +68,7 @@ class ImageService {
         preferredMediaType?: 'image' | 'video',
         opts: { requirePersonFree?: boolean; skip?: Set<string> } = {}
     ): Promise<VaultEntry | null> {
-        const entries = await this.readVaultIndex()
+        const entries = await vaultStore.list(preferredMediaType ? { mediaType: preferredMediaType } : {})
         if (entries.length === 0) return null
 
         const normSubject = this.slugify(subjectKey)
@@ -180,9 +139,7 @@ class ImageService {
             ...(personFree ? { personFree: true } : {})
         }
 
-        const entries = await this.readVaultIndex()
-        entries.push(newEntry)
-        await this.writeVaultIndex(entries)
+        await vaultStore.add(newEntry)
         return newEntry
     }
 
@@ -294,7 +251,7 @@ Respond ONLY with JSON: {"valid": bool, "has_overlay_text": bool, "has_logo_or_w
                 if (!cached) break
                 if (cached.clipCheck !== `${CLIP_GATE_VERSION}-ok`) {
                     const check = await this.auditClip(cached.filePath, subjectKey, searchQuery)
-                    await this.updateVaultEntry(cached.fileName, {
+                    await vaultStore.update(cached.fileName, {
                         clipCheck: `${CLIP_GATE_VERSION}-${check.ok ? 'ok' : 'rejected'}`,
                         clipCheckReason: check.reason
                     })
@@ -407,9 +364,7 @@ Respond ONLY with JSON: {"valid": bool, "has_overlay_text": bool, "has_logo_or_w
                     clipCheckReason: check.reason,
                     sourceVideoId: videoId
                 }
-                const entries = await this.readVaultIndex()
-                entries.push(newEntry)
-                await this.writeVaultIndex(entries)
+                await vaultStore.add(newEntry)
                 usedFiles.add(fileName)
 
                 console.log(`[AIVault] Clip limpio verificado y guardado: ${fileName}`)
@@ -495,8 +450,7 @@ Respond ONLY with JSON: {"valid": bool, "has_overlay_text": bool, "has_logo_or_w
         const finalPath = path.join(this.vaultDir, fileName)
         await fs.rename(producedPath, finalPath)
 
-        const entries = await this.readVaultIndex()
-        entries.push({
+        await vaultStore.add({
             fileName,
             filePath: finalPath,
             mediaType: 'video',
@@ -508,7 +462,6 @@ Respond ONLY with JSON: {"valid": bool, "has_overlay_text": bool, "has_logo_or_w
             clipCheck: 'user-provided',
             sourceVideoId: produced.slice(baseName.length + 1, -4)
         })
-        await this.writeVaultIndex(entries)
 
         return {
             imagePath: finalPath,

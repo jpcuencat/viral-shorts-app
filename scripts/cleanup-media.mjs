@@ -48,11 +48,28 @@ function remove(p) {
     if (APPLY) fs.rmSync(p, { recursive: true, force: true })
 }
 
-// Archivos de public/temp que siguen en uso por el editor de escenas (audio y subtítulos de cada manifest)
+// Archivos de public/temp que siguen en uso por el editor de escenas (audio y subtítulos de cada escena)
 const protectedTemp = new Set()
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+let admin = null
+if (supabaseUrl && serviceKey) {
+    const { createClient } = await import('@supabase/supabase-js')
+    admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } })
+    const { data, error } = await admin.from('reel_scene_assets').select('audio_path, subtitle_path')
+    if (error) {
+        console.error('[temp] No se pudo leer el desglose de escenas de Supabase; por seguridad no se borra nada de temp.', error.message)
+        process.exit(1)
+    }
+    for (const r of data || []) {
+        if (r.audio_path) protectedTemp.add(path.basename(r.audio_path))
+        if (r.subtitle_path) protectedTemp.add(path.basename(r.subtitle_path))
+    }
+}
+// Manifiestos JSON antiguos (incluidos los ya importados *.migrated)
 if (fs.existsSync(outputDir)) {
     for (const f of fs.readdirSync(outputDir)) {
-        if (!/^manifest_.*\.json$/.test(f)) continue
+        if (!/^manifest_.*\.json(\.migrated)?$/.test(f)) continue
         try {
             const entries = JSON.parse(fs.readFileSync(path.join(outputDir, f), 'utf-8'))
             for (const e of entries) {
@@ -76,14 +93,10 @@ if (fs.existsSync(tempDir)) {
 
 // 2. public/output (opcional, protegido por referencias en Supabase)
 if (OUTPUT_DAYS !== null && fs.existsSync(outputDir)) {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!url || !key) {
+    if (!admin) {
         console.warn('\n[output] Falta SUPABASE_SERVICE_ROLE_KEY: no se toca public/output por seguridad.')
     } else {
-        const { createClient } = await import('@supabase/supabase-js')
-        const supabase = createClient(url, key)
-        const { data: reels, error } = await supabase.from('reels').select('id, export_url')
+        const { data: reels, error } = await admin.from('reels').select('id, export_url')
         if (error) {
             console.error('[output] No se pudo leer reels:', error.message)
         } else {

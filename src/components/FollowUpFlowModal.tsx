@@ -54,7 +54,7 @@ export function FollowUpFlowModal({
     buttonLabel = 'Crear Seguimiento (Parte 2)',
 }: FollowUpFlowModalProps) {
     const router = useRouter()
-    const { isGenerating, startGeneration } = useGeneration()
+    const { startGeneration } = useGeneration()
 
     const [open, setOpen] = useState(false)
     const [customAngle, setCustomAngle] = useState('')
@@ -327,8 +327,7 @@ export function FollowUpFlowModal({
                         disabled={
                             selectedIndex === null ||
                             loadingSuggestions ||
-                            processingAction !== null ||
-                            isGenerating
+                            processingAction !== null
                         }
                         onClick={() => handleExecuteFlow('full_video')}
                         className="w-full sm:w-auto bg-gradient-to-r from-pink-500 to-violet-600 hover:from-pink-600 hover:to-violet-700 text-white text-xs"

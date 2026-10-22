@@ -15,15 +15,18 @@ export async function getSocialDashboardData(): Promise<{
     config: SocialConfig
     publications: PublicationRecord[]
 }> {
-    return {
-        config: socialPublishService.getConfig(),
-        publications: socialPublishService.getPublications(),
-    }
+    const supabase = await createClient()
+    const [config, publications] = await Promise.all([
+        socialPublishService.getConfig(supabase),
+        socialPublishService.getPublications(supabase),
+    ])
+    return { config, publications }
 }
 
 export async function saveSocialConfigAction(newConfig: Partial<SocialConfig>) {
     try {
-        const saved = socialPublishService.saveConfig(newConfig)
+        const supabase = await createClient()
+        const saved = await socialPublishService.saveConfig(supabase, newConfig)
         revalidatePath('/social')
         return { success: true, config: saved }
     } catch (error: any) {
@@ -44,7 +47,7 @@ export async function publishReelToSocialsAction(params: {
 }) {
     const supabase = await createClient()
 
-    const res = await socialPublishService.publishReel(params)
+    const res = await socialPublishService.publishReel(supabase, params)
 
     if (res.success) {
         await supabase
@@ -61,7 +64,8 @@ export async function publishReelToSocialsAction(params: {
 }
 
 export async function testWebhookAction(webhookUrl?: string, webhookSecret?: string) {
-    const config = socialPublishService.getConfig()
+    const supabase = await createClient()
+    const config = await socialPublishService.getConfig(supabase)
     const targetUrl = (webhookUrl || config.webhookUrl || '').trim()
     const secret = (webhookSecret ?? config.webhookSecret ?? '').trim()
 
@@ -141,13 +145,13 @@ export async function deleteYouTubeShortAction(params: {
     scriptId?: string
 }) {
     try {
-        const res = await socialPublishService.deleteYouTubeShort({
+        const supabase = await createClient()
+        const res = await socialPublishService.deleteYouTubeShort(supabase, {
             videoIdOrUrl: params.videoIdOrUrl,
             publicationId: params.publicationId,
         })
 
         if (params.reelId) {
-            const supabase = await createClient()
             await supabase
                 .from('reels')
                 .update({ youtube_id: null, status: 'completed' })
