@@ -700,7 +700,24 @@ Respond ONLY with JSON: {"topic_type": "...", "location_label": "...", "scenes":
                         await writeSceneManifest()
 
                         const reAudit = await auditReelQuality(videoUrl, toAuditScenes(), ideaTitle)
-                        if (reAudit) {
+                        if (reAudit && reAudit.score < qualityScore) {
+                            // La corrección empeoró el reel: se restaura la escena original y su render
+                            console.log(`[ReelGen] La corrección bajó la nota (${qualityScore} → ${reAudit.score}); se conserva la escena original.`)
+                            processedScenes[weakIdx] = targetScene
+                            videoUrl = await videoService.generateVideo(
+                                processedScenes.map(s => ({
+                                    imagePath: s.imagePath,
+                                    audioPath: s.audioPath,
+                                    text: s.sceneData.caption || s.sceneData.text.slice(0, 30),
+                                    subtitlePath: s.subtitlePath,
+                                    videoStartTime: s.videoStartTime,
+                                    duration: s.duration
+                                })),
+                                { reelId, onlySceneIndex: weakIdx }
+                            )
+                            await writeSceneManifest()
+                            qualityFeedback = `${qualityFeedback} (Se probó regenerar la escena ${weakIdx + 1}, pero obtuvo ${reAudit.score}/100; se conservó la versión original.)`
+                        } else if (reAudit) {
                             qualityFeedback = `${reAudit.feedback} (Escena ${weakIdx + 1} regenerada automáticamente; nota previa ${qualityScore}/100.)`
                             qualityScore = reAudit.score
                         } else {
