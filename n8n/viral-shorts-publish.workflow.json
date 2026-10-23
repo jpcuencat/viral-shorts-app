@@ -302,7 +302,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const up = $('YouTube: subir Short').first().json;\nconst r = $input.first().json;\nconst id = r.id || up.id;\nreturn [{ json: { platform: 'youtube', ok: true, videoId: id, url: id ? `https://youtube.com/shorts/${id}` : '', madeForKids: r.status?.selfDeclaredMadeForKids ?? false, privacy: r.status?.privacyStatus } }];"
+        "jsCode": "const up = $('YouTube: subir Short').first().json;\nconst r = $input.first().json;\nconst id = r.id || up.uploadId || up.id;\nreturn [{ json: { platform: 'youtube', ok: true, videoId: id, url: id ? `https://youtube.com/shorts/${id}` : '', madeForKids: r.status?.selfDeclaredMadeForKids ?? false, privacy: r.status?.privacyStatus } }];"
       },
       "id": "b900ec23-4c4c-4ed8-8f54-4cae276b2643",
       "name": "YouTube: resultado",
@@ -586,7 +586,7 @@
         "nodeCredentialType": "youTubeOAuth2Api",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ id: $json.id, status: { privacyStatus: $('Validar y preparar').first().json.privacyStatus, selfDeclaredMadeForKids: false, embeddable: true, publicStatsViewable: true, license: 'youtube' } }) }}",
+        "jsonBody": "={{ JSON.stringify({ id: $json.uploadId || $json.id, status: { privacyStatus: $('Validar y preparar').first().json.privacyStatus, selfDeclaredMadeForKids: false, embeddable: true, publicStatsViewable: true, license: 'youtube' } }) }}",
         "options": {}
       },
       "id": "56897a8b-6dae-4397-b5f4-30699f53f606",
