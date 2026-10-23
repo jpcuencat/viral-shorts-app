@@ -442,31 +442,42 @@ Respond ONLY with JSON: {"choice":0,"reason":"..."}`
         const room = seg.end - seg.usedUntil
         const start = Math.max(0, seg.usedUntil + Math.max(0, Math.min(1, (room - clipLen) / 2)))
         const end = start + clipLen
+        // Se baja el tramo con 2 s de margen y SIN --force-keyframes-at-cuts (recodificar durante la descarga
+        // tardaba minutos). El corte exacto se hace después, en el mismo paso del recorte limpio.
+        const pad = Math.min(2, start)
+        const sectionStart = start - pad
+        const sectionEnd = end + 2
         const base = `fx_${this.runId}_${randomUUID().slice(0, 6)}`
         const raw = path.join(this.tempDir, `${base}.%(ext)s`)
         const args = this.ytArgs([
             `https://www.youtube.com/watch?v=${seg.videoId}`, '--no-playlist',
             '-f', 'bestvideo[height<=1080][height>=480][ext=mp4]/bestvideo[height<=1080][ext=mp4]/best[height<=1080][ext=mp4]/best',
-            '--download-sections', `*${start.toFixed(1)}-${end.toFixed(1)}`, '--force-keyframes-at-cuts', '--force-overwrites', '-o', raw,
+            '--download-sections', `*${sectionStart.toFixed(1)}-${sectionEnd.toFixed(1)}`, '--force-overwrites', '-o', raw,
         ])
         if (path.isAbsolute(FFMPEG_PATH)) args.push('--ffmpeg-location', FFMPEG_PATH)
         const t = Date.now()
-        await execFileAsync(YTDLP_PATH, args, { timeout: 90000 }).catch(err => {
+        await execFileAsync(YTDLP_PATH, args, { timeout: 150000 }).catch(err => {
             this.track('download_error', { seg: seg.key, error: String(err?.message || err).slice(0, 300) })
         })
         const produced = fsSync.readdirSync(this.tempDir).find(f => f.startsWith(`${base}.`) && /\.(mp4|webm|mkv)$/.test(f))
-        if (!produced) return null
+        if (!produced) {
+            this.cleanupTemp(base)
+            return null
+        }
         const rawPath = path.join(this.tempDir, produced)
         const frames: string[] = []
         try {
-            const { w, h, d } = await this.probe(rawPath)
+            const { w, h, d: rawDur } = await this.probe(rawPath)
+            // El archivo empieza en el fotograma clave anterior al margen: el tramo útil va desde "pad"
+            const offset = Math.min(pad, Math.max(0, rawDur - clipLen))
+            const d = Math.min(clipLen, rawDur - offset)
             if (!w || !h || d < 1.5) {
                 this.track('gate', { seg: seg.key, ok: false, reason: 'clip ilegible o vacío' })
                 return null
             }
             for (const frac of [0.15, 0.5, 0.85]) {
                 const fp = path.join(this.tempDir, `${base}_g${Math.round(frac * 100)}.jpg`)
-                await execFileAsync(FFMPEG_PATH, ['-y', '-ss', (d * frac).toFixed(2), '-i', rawPath, '-frames:v', '1', '-vf', 'scale=960:-2', '-q:v', '3', fp], { timeout: 20000 })
+                await execFileAsync(FFMPEG_PATH, ['-y', '-ss', (offset + d * frac).toFixed(2), '-i', rawPath, '-frames:v', '1', '-vf', 'scale=960:-2', '-q:v', '3', fp], { timeout: 20000 })
                 if (fsSync.existsSync(fp)) frames.push(fp)
             }
             if (frames.length === 0) return null
@@ -508,7 +519,7 @@ Respond ONLY with JSON: {"is_real_footage":true,"is_relevant":true,"overlays":[{
             const fileName = `${slug(p.category)}-${slug(p.subjectKey)}-${tagSlug}_${randomUUID().slice(0, 6)}.clean.mp4`
             const outPath = path.join(this.vaultDir, fileName)
             await execFileAsync(FFMPEG_PATH, [
-                '-y', '-i', rawPath, '-an',
+                '-y', '-ss', offset.toFixed(2), '-i', rawPath, '-t', d.toFixed(2), '-an',
                 '-vf', `crop=${crop.w}:${crop.h}:${crop.x}:${crop.y},scale=${OUT_W}:${OUT_H}:flags=lanczos,setsar=1`,
                 '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', outPath,
             ], { timeout: 90000 })
@@ -529,7 +540,17 @@ Respond ONLY with JSON: {"is_real_footage":true,"is_relevant":true,"overlays":[{
         } finally {
             await fs.unlink(rawPath).catch(() => { })
             await Promise.all(frames.map(f => fs.unlink(f).catch(() => { })))
+            this.cleanupTemp(base)
         }
+    }
+
+    /** Borra restos de una descarga (.part, .ytdl, fragmentos) que yt-dlp deja si se corta. */
+    private cleanupTemp(base: string) {
+        try {
+            for (const f of fsSync.readdirSync(this.tempDir)) {
+                if (f.startsWith(base)) fsSync.rmSync(path.join(this.tempDir, f), { force: true })
+            }
+        } catch { /* nada que limpiar */ }
     }
 
     // ---------- API pública ----------
