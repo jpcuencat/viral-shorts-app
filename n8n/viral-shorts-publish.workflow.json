@@ -302,14 +302,14 @@
     },
     {
       "parameters": {
-        "jsCode": "const r = $input.first().json;\nreturn [{ json: { platform: 'youtube', ok: true, videoId: r.id, url: r.id ? `https://youtube.com/shorts/${r.id}` : '' } }];"
+        "jsCode": "const up = $('YouTube: subir Short').first().json;\nconst r = $input.first().json;\nconst id = r.id || up.id;\nreturn [{ json: { platform: 'youtube', ok: true, videoId: id, url: id ? `https://youtube.com/shorts/${id}` : '', madeForKids: r.status?.selfDeclaredMadeForKids ?? false, privacy: r.status?.privacyStatus } }];"
       },
       "id": "b900ec23-4c4c-4ed8-8f54-4cae276b2643",
       "name": "YouTube: resultado",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2200,
+        2420,
         220
       ]
     },
@@ -322,8 +322,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2200,
-        380
+        2420,
+        400
       ]
     },
     {
@@ -577,6 +577,29 @@
         -40,
         -120
       ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "https://www.googleapis.com/youtube/v3/videos?part=status",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "youTubeOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ id: $json.id, status: { privacyStatus: $('Validar y preparar').first().json.privacyStatus, selfDeclaredMadeForKids: false, embeddable: true, publicStatsViewable: true, license: 'youtube' } }) }}",
+        "options": {}
+      },
+      "id": "56897a8b-6dae-4397-b5f4-30699f53f606",
+      "name": "YouTube: marcar \"No es para niños\"",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        220
+      ],
+      "onError": "continueErrorOutput",
+      "notes": "Fija la audiencia \"No es contenido para niños\" y la privacidad después de subir. Sin esto YouTube puede dejar el Short como borrador.",
+      "notesInFlow": true
     }
   ],
   "connections": {
@@ -731,7 +754,7 @@
       "main": [
         [
           {
-            "node": "YouTube: resultado",
+            "node": "YouTube: marcar \"No es para niños\"",
             "type": "main",
             "index": 0
           }
@@ -868,6 +891,24 @@
         [
           {
             "node": "TikTok: registrar fallo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube: marcar \"No es para niños\"": {
+      "main": [
+        [
+          {
+            "node": "YouTube: resultado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "YouTube: registrar fallo",
             "type": "main",
             "index": 0
           }

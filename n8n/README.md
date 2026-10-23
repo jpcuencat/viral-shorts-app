@@ -7,7 +7,7 @@ n8n → **Workflows → ⋯ → Import from File** → elige el JSON.
 
 ## 2. Configurar
 - **Nodo "Validar y preparar"** → bloque `CONFIG` al inicio del código: secreto del webhook, redes activas y tokens de Instagram y TikTok.
-- **Nodos "YouTube: subir Short" y "YouTube: eliminar Short"** → crea o elige la credencial *YouTube OAuth2 API* con la cuenta del **canal nuevo**.
+- **Nodos "YouTube: subir Short", "YouTube: marcar \"No es para niños\"" y "YouTube: eliminar Short"** → crea o elige la credencial *YouTube OAuth2 API* con la cuenta del **canal nuevo**.
   - En Google Cloud: API "YouTube Data API v3" activa; cliente OAuth tipo *Web* con la URI de redirección `http://localhost:5678/rest/oauth2-credential/callback`.
   - Al conectar, elige el canal nuevo (no el principal de la cuenta).
 - **Instagram** (cuenta profesional vinculada a una página de Facebook): app de Meta con *Instagram API (Facebook Login)*, permisos `instagram_basic`, `instagram_content_publish`, `pages_show_list`. Usa un token de larga duración o de *usuario del sistema* (no caduca). El video se sube como archivo: no hace falta URL pública.
