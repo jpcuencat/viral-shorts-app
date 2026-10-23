@@ -2,6 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { generateJson } from '@/lib/ai/gemini'
 import { ScriptResponseSchema } from '@/lib/ai/schemas'
 import { researchFacts } from '@/lib/ai/fact-check'
+import { getSearchSuggestions, countryFromLocation } from '@/lib/search/suggestions'
+import { insightsPromptBlock } from '@/lib/learning/insights'
 
 /**
  * Genera y guarda el guion de una idea. Recibe el cliente de base de datos para poder ejecutarse
@@ -90,6 +92,29 @@ export async function generateScriptForIdea(
 `
         }
 
+        // 1.D BÚSQUEDAS REALES (autocompletado de YouTube y Google) + LECCIONES DEL CANAL
+        const ownerId = expectedUserId || idea.user_id
+        const [search, lessons] = await Promise.all([
+            getSearchSuggestions(
+                [idea.ai_metadata?.matched_trend, idea.title, facts.location].filter(Boolean) as string[],
+                { gl: countryFromLocation(facts.location) }
+            ).catch(() => ({ seeds: [], youtube: [], google: [] })),
+            insightsPromptBlock(supabase, ownerId, 'script'),
+        ])
+        if (search.youtube.length || search.google.length) {
+            console.log(`[Search] ${search.youtube.length} búsquedas YouTube, ${search.google.length} Google para "${search.seeds.join(' | ')}"`)
+        }
+        const searchSection = search.youtube.length || search.google.length ? `
+      LO QUE LA GENTE BUSCA AHORA (autocompletado real de YouTube y Google):
+      ${search.youtube.length ? `YouTube: ${search.youtube.join(' · ')}` : ''}
+      ${search.google.length ? `Google: ${search.google.join(' · ')}` : ''}
+      Usa estos términos REALES (los que encajen con los hechos verificados) en 'seo_title', 'seo_description' y 'hashtags'.
+      El título debe contener la frase de búsqueda más relevante de forma natural. Nada de clickbait falso. Incluye siempre #Shorts.
+` : ''
+        const lessonsSection = lessons ? `
+      ${lessons.split('\n').join('\n      ')}
+` : ''
+
         // 2. Construct the Prompt (Visual Storyboard & Direct Protagonist Focus)
         const prompt = `
       Actúa como un Director y Guionista Experto en YouTube Shorts y TikTok.
@@ -101,6 +126,8 @@ export async function generateScriptForIdea(
       - Categoría: "${idea.categories?.name || 'General'}"
       ${factSection}
       ${regenSection}
+      ${searchSection}
+      ${lessonsSection}
       ${idea.ai_metadata?.parent_idea_title ? `- VIDEO DE SEGUIMIENTO / CONTINUACIÓN DE: "${idea.ai_metadata.parent_idea_title}" (Ángulo: ${idea.ai_metadata?.follow_up_angle || 'Parte 2'}). Profundiza en este nuevo ángulo sin repetir lo obvio.` : ''}
       
       INSTRUCCIONES CRÍTICAS DE NARRACIÓN Y RITMO (MUY IMPORTANTE):
@@ -163,6 +190,12 @@ export async function generateScriptForIdea(
             location: facts.location,
             event_date: facts.eventDate,
             checked_at: facts.checkedAt,
+        }
+        if (search.youtube.length || search.google.length) {
+            ;(scriptData.content as Record<string, unknown>).search_terms = { seeds: search.seeds, youtube: search.youtube, google: search.google }
+        }
+        if (regen?.feedback?.trim()) {
+            ;(scriptData.content as Record<string, unknown>).regen_feedback = regen.feedback.trim().slice(0, 1500)
         }
         const sourcesLine = facts.verified && facts.domains.length > 0 ? `\n\nFuentes: ${facts.domains.join(', ')}` : ''
 

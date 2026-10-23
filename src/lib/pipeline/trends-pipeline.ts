@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { getDailyTrends, getTodayTrendCategoryName } from '@/lib/trends'
 import { generateJson } from '@/lib/ai/gemini'
 import { TrendSelectionSchema } from '@/lib/ai/schemas'
+import { insightsPromptBlock, refreshInsightsIfStale } from '@/lib/learning/insights'
 import { JobCancelledError, type ProgressReporter } from '@/lib/jobs/types'
 
 /**
@@ -134,6 +135,10 @@ export async function runTrendsPipeline(params: {
         freshTrends = allTrends.slice(0, 15)
     }
 
+    // 3.B Lo aprendido del canal (métricas reales + crítico + correcciones) para priorizar
+    await refreshInsightsIfStale(supabase, userId, 24)
+    const lessons = await insightsPromptBlock(supabase, userId, 'trends')
+
     // 4. Hybrid Open Evaluation using gemini-3-flash-preview
     const prompt = `
 Actúa como un Director de Contenido Viral GLOBAL para YouTube Shorts, TikTok e Instagram Reels, que produce en ESPAÑOL para una audiencia hispanohablante internacional.
@@ -144,7 +149,7 @@ ${JSON.stringify(categoryNames)}
 TENDENCIAS EN TIEMPO REAL A NIVEL MUNDIAL (Google Trends de varios países, X/Twitter mundial y Ecuador, noticias internacionales y de Ecuador, virales en redes, Reddit):
 ${freshTrends.map((t, idx) => `[${idx}] (${t.traffic}) "${t.title}" ${t.newsItemTitle && t.newsItemTitle !== t.title ? `- Contexto: ${t.newsItemTitle}` : ''}`).join('\n')}
 
-REGLAS DE SELECCIÓN (IMPORTANTE):
+${lessons ? lessons + '\n\n' : ''}REGLAS DE SELECCIÓN (IMPORTANTE):
 1. Selecciona las 4 tendencias con MAYOR potencial viral a nivel MUNDIAL, sin favorecer a ningún país (Ecuador es un mercado más y compite en igualdad). Los temas que son tendencia en varios países a la vez son señal fuerte. Busca variedad: no elijas las 4 del mismo país o tema, ni dos ideas sobre la misma noticia.
 2. La categoría NO es un filtro: elige las tendencias por su potencial viral aunque no encajen en ninguna categoría.
    "category_name": el nombre EXACTO de la CATEGORÍA PERMITIDA que mejor describa el tema (noticia local de Ecuador → "Ecuador"; internacional → "Mundo" salvo que encaje mejor una temática como Deportes o Tecnología). Si no encaja claramente en ninguna, usa "Tendencias". Nunca inventes una categoría nueva.

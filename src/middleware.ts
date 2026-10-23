@@ -14,7 +14,8 @@ export const config = {
          * - favicon.ico (favicon file)
          * - api/upload-video: el middleware copia el cuerpo de la petición con un límite de 10 MB,
          *   lo que corta los videos subidos. Esa ruta valida la sesión por su cuenta.
+         * - api/n8n: llamadas de n8n (sin sesión), autenticadas con el secreto del webhook.
          */
-        '/((?!_next/static|_next/image|favicon.ico|api/upload-video|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+        '/((?!_next/static|_next/image|favicon.ico|api/upload-video|api/n8n|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
     ],
 }

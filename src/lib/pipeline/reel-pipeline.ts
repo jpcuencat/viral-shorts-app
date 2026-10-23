@@ -8,6 +8,7 @@ import { StoryboardPlanSchema, QualityAuditSchema, type QualityAudit } from '@/l
 import { subtitleService } from '@/services/subtitle-service'
 import { saveSceneManifest, type SceneManifestEntry } from '@/lib/scene-store'
 import { FootageFinder } from '@/services/footage/footage-finder'
+import { insightsPromptBlock } from '@/lib/learning/insights'
 import { JobCancelledError, type ProgressReporter } from '@/lib/jobs/types'
 import fs from 'fs'
 import path from 'path'
@@ -304,6 +305,7 @@ export async function runReelPipeline(params: {
 
             try {
                 const protagonistHint = content.protagonist_en || ideaTitle
+                const visualLessons = await insightsPromptBlock(supabase, script.user_id || userId, 'visual')
                 const plannerPrompt = `You are the visual director of a short-form NEWS & explainer channel for a Spanish-speaking audience.
 TOPIC TITLE: "${ideaTitle}"
 TOPIC DESCRIPTION: "${ideaDesc}"
@@ -311,6 +313,7 @@ MAIN SUBJECT: "${protagonistHint}"
 CATEGORY: "${ideaCategory}"
 ${factCheck?.verified ? `VERIFIED FACTS AVAILABLE (sources: ${(factCheck.domains || []).join(', ')}). Card texts must only use facts stated in the narration below.` : ''}
 
+${visualLessons}
 STEP 1 — "topic_type":
 - "news_real_people": a current news event centered on specific real, identifiable people (politicians, athletes, celebrities, victims, local figures).
 - "news_event": a current news event about places, institutions, disasters, sports results, etc.
