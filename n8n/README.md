@@ -25,7 +25,7 @@ n8n → **Workflows → ⋯ → Import from File** → elige el JSON.
 - Cada 6 horas el nodo **Cada 6 horas: métricas** junta vistas, likes y comentarios de YouTube, Instagram y Facebook y los envía a `/api/n8n/metrics`. La app los muestra en **Rendimiento** y recalcula las lecciones del canal, que se usan en tendencias, guiones y plan visual.
 - `CONFIG.APP_URL`: si n8n corre en Docker usa `http://host.docker.internal:3000` (el flujo prueba las dos direcciones). `CONFIG.METRICS: false` apaga la recolección.
 - Las llamadas a la app usan el mismo `WEBHOOK_SECRET`.
-- Para que lleguen las vistas de Instagram y Facebook, el `INSTAGRAM_TOKEN` debe incluir además los permisos `instagram_manage_insights` y `read_insights`.
+- Para que lleguen las vistas de Instagram y Facebook, el `INSTAGRAM_TOKEN` debe incluir además los permisos `instagram_manage_insights` y `read_insights` (se agregan en la app de Meta → Casos de uso → Personalizar). Puede ser token de usuario: el flujo obtiene solo el token de la página para Facebook.
 
 ## Notas
 - n8n debe estar encendido para publicar y para las publicaciones programadas (espera hasta la hora indicada).
