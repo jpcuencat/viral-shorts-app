@@ -96,7 +96,7 @@ export async function testWebhookAction(webhookUrl?: string, webhookSecret?: str
         formData.append('scheduledAt', '')
         formData.append('timestamp', new Date().toISOString())
 
-        // Attach the latest rendered .mp4 from public/output (if available) so Railway n8n receives Binary -> data!
+        // Attach the latest rendered .mp4 from public/output (if available) so n8n receives Binary -> data!
         const outputDir = path.join(process.cwd(), 'public', 'output')
         if (fs.existsSync(outputDir)) {
             const mp4Files = fs

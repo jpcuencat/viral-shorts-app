@@ -3,7 +3,7 @@ import path from 'path'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 /**
- * Publicación de Reels: única vía = webhook de n8n (Railway), que publica en YouTube y demás redes
+ * Publicación de Reels: única vía = webhook de n8n (local, http://localhost:5678), que publica en YouTube, Instagram y TikTok
  * con sus propias credenciales. La app ya no guarda tokens de YouTube, TikTok ni Instagram.
  */
 export type SocialPlatform = 'webhook'
@@ -219,7 +219,7 @@ class SocialPublishService {
             externalIdOrUrl: webhookUrl,
             message: payload.scheduledAt
                 ? `Video MP4 + metadatos enviados a n8n (Programado: ${new Date(payload.scheduledAt).toLocaleString('es-EC')})`
-                : 'Video MP4 + metadatos enviados directamente a tu flujo n8n en Railway.'
+                : 'Video MP4 + metadatos enviados a tu flujo n8n (YouTube · Instagram · TikTok). Revisa el resultado en n8n → Executions.'
         }
     }
 

@@ -1,0 +1,888 @@
+{
+  "name": "Viral Shorts → YouTube · Instagram · TikTok",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "viral-shorts-publish",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "fce7b380-4025-4583-8d71-44eb9f314e87",
+      "name": "Webhook: app Viral Shorts",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "86910ac9-ae10-45bb-8ac2-1cc13fd6592c"
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n// ⚙️ CONFIGURACIÓN — edita SOLO este bloque\n// =====================================================================\nconst CONFIG = {\n  // Mismo valor que \"Secreto del Webhook\" en la app (Redes Sociales). Vacío = no se valida.\n  WEBHOOK_SECRET: '',\n  // true = no publica nada: solo registra lo que haría (para probar el flujo)\n  DRY_RUN: false,\n\n  // Redes activas\n  YOUTUBE: true,\n  INSTAGRAM: true,\n  TIKTOK: true,\n\n  // YouTube (la cuenta se elige en la credencial del nodo \"YouTube: subir Short\")\n  YOUTUBE_CATEGORY_ID: '25',   // 25 = Noticias y política\n  YOUTUBE_REGION: 'EC',\n\n  // Instagram (API de Instagram con inicio de sesión de Facebook; cuenta profesional vinculada a una página)\n  INSTAGRAM_USER_ID: '',       // ID de la cuenta de Instagram (empieza con 1784...)\n  INSTAGRAM_TOKEN: '',         // token con permisos instagram_basic + instagram_content_publish\n  GRAPH_VERSION: 'v24.0',\n\n  // TikTok (Content Posting API)\n  TIKTOK_CLIENT_KEY: '',\n  TIKTOK_CLIENT_SECRET: '',\n  TIKTOK_REFRESH_TOKEN: '',    // solo la primera vez: después se renueva y guarda solo\n  TIKTOK_MODE: 'inbox',        // 'inbox' = llega a tus borradores de TikTok (no requiere app auditada)\n                               // 'direct' = publica directo (requiere scope video.publish)\n  TIKTOK_PRIVACY: 'SELF_ONLY', // en 'direct': apps sin auditar solo pueden SELF_ONLY\n};\n// =====================================================================\n\nconst item = $input.first();\nconst headers = item.json.headers || {};\nconst body = item.json.body || {};\nconst event = String(body.event || 'reel.publish');\nconst authorized = !CONFIG.WEBHOOK_SECRET || headers['x-webhook-secret'] === CONFIG.WEBHOOK_SECRET;\n\n// Video binario (la app lo envía en el campo \"data\")\nconst keys = Object.keys(item.binary || {});\nconst videoKey = keys.includes('data') ? 'data' : keys[0];\nconst binary = {};\nlet videoBytes = 0;\nif (videoKey) {\n  binary.video = item.binary[videoKey];\n  const buf = await this.helpers.getBinaryDataBuffer(0, videoKey);\n  videoBytes = buf.length;\n}\n\nlet hashtags = [];\ntry { hashtags = JSON.parse(body.hashtags || '[]'); } catch { hashtags = String(body.hashtagsText || '').split(/[\\s,]+/).filter(Boolean); }\nhashtags = hashtags.map(h => String(h).trim()).filter(Boolean).map(h => (h.startsWith('#') ? h : '#' + h));\nif (!hashtags.some(h => h.toLowerCase() === '#shorts')) hashtags.push('#Shorts');\n\nconst title = String(body.title || 'Nuevo video').trim();\nconst description = String(body.description || '').trim();\nconst cut = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);\n\nconst ytTitle = cut(title.includes('#Shorts') ? title : `${title} #Shorts`, 100);\nconst ytDescription = cut(`${description}\\n\\n${hashtags.join(' ')}`.trim(), 4900);\nconst caption = cut(`${title}\\n\\n${description}\\n\\n${hashtags.slice(0, 30).join(' ')}`.trim(), 2200);\n\nconst scheduledAt = String(body.scheduledAt || '').trim();\nconst scheduledMs = scheduledAt ? Date.parse(scheduledAt) : NaN;\nconst isScheduled = Number.isFinite(scheduledMs) && scheduledMs > Date.now() + 60000;\nconst isTest = event === 'reel.publish.test';\nconst dryRun = CONFIG.DRY_RUN || isTest;\n\nreturn [{\n  json: {\n    authorized,\n    event,\n    isDelete: event === 'reel.delete',\n    isTest,\n    reelId: body.reelId || '',\n    title, ytTitle, ytDescription, caption,\n    tags: hashtags.map(h => h.replace(/^#/, '')).join(','),\n    privacyStatus: ['public', 'unlisted', 'private'].includes(body.privacyStatus) ? body.privacyStatus : 'public',\n    scheduledAt: isScheduled ? new Date(scheduledMs).toISOString() : '',\n    isScheduled,\n    youtubeVideoId: String(body.youtubeVideoId || '').trim(),\n    videoBytes,\n    hasVideo: Boolean(videoKey),\n    publishYoutube: CONFIG.YOUTUBE && !dryRun && Boolean(videoKey),\n    publishInstagram: CONFIG.INSTAGRAM && !dryRun && Boolean(videoKey),\n    publishTiktok: CONFIG.TIKTOK && !dryRun && Boolean(videoKey),\n    cfg: {\n      dryRun,\n      youtubeCategoryId: CONFIG.YOUTUBE_CATEGORY_ID,\n      youtubeRegion: CONFIG.YOUTUBE_REGION,\n      instagramUserId: CONFIG.INSTAGRAM_USER_ID,\n      instagramToken: CONFIG.INSTAGRAM_TOKEN,\n      graphVersion: CONFIG.GRAPH_VERSION,\n      tiktokClientKey: CONFIG.TIKTOK_CLIENT_KEY,\n      tiktokClientSecret: CONFIG.TIKTOK_CLIENT_SECRET,\n      tiktokRefreshToken: CONFIG.TIKTOK_REFRESH_TOKEN,\n      tiktokMode: CONFIG.TIKTOK_MODE,\n      tiktokPrivacy: CONFIG.TIKTOK_PRIVACY,\n    },\n  },\n  binary,\n}];"
+      },
+      "id": "ca474b5d-c1d7-45fb-948f-e6885f8405e8",
+      "name": "Validar y preparar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "35361806-5e7b-4a3a-8b79-8dfd53675a4e",
+              "leftValue": "={{ $json.authorized }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "761a139c-f42d-410f-9f38-b51e34a7ad25",
+      "name": "¿Autorizado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, error: 'Secreto del webhook inválido' } }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "12272b28-e536-4e06-87a7-c8a50b93d096",
+      "name": "Responder 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, accepted: true, event: $json.event, dryRun: $json.cfg.dryRun, youtube: $json.publishYoutube, instagram: $json.publishInstagram, tiktok: $json.publishTiktok, scheduledAt: $json.scheduledAt || null } }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "46547635-a8a3-4d27-bc8e-9547ef9a7c0a",
+      "name": "Responder 202 (aceptado)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "40f38038-d2f9-44a3-b59e-522281f6a6d8",
+              "leftValue": "={{ $json.isDelete }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "58c3e0ac-bd32-4915-bce5-dc6193b5df53",
+      "name": "¿Eliminar Short?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "delete",
+        "videoId": "={{ $json.youtubeVideoId }}",
+        "options": {}
+      },
+      "id": "383e56e0-a934-442e-8ea1-c4deb59be049",
+      "name": "YouTube: eliminar Short",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "d2c8d34d-c9ce-4531-9f22-9577409b9175",
+              "leftValue": "={{ $json.cfg.dryRun }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "799e22f1-427c-45e1-9a2b-ef3f75a527fe",
+      "name": "¿Prueba / DRY_RUN?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Modo prueba / DRY_RUN: no publica, solo muestra lo que haría.\nconst j = $input.first().json;\nreturn [{ json: { dryRun: true, event: j.event, hasVideo: j.hasVideo, videoMB: +(j.videoBytes / 1048576).toFixed(1),\n  youtube: { title: j.ytTitle, privacy: j.privacyStatus }, instagramCaption: j.caption.slice(0, 200), scheduledAt: j.scheduledAt || 'ahora' } }];"
+      },
+      "id": "00b011d4-c799-46ff-93aa-2a22ec1c4672",
+      "name": "Resumen de prueba",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "78d04260-0f12-4083-948d-5f328949903f",
+              "leftValue": "={{ $json.isScheduled }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d4062fd8-5e2c-4026-814f-61587c909b19",
+      "name": "¿Programado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "specificTime",
+        "dateTime": "={{ $json.scheduledAt }}"
+      },
+      "id": "22da4d7d-ed5b-4e32-82ee-ae76480df4fc",
+      "name": "Esperar hora programada",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        360
+      ],
+      "webhookId": "faf78503-2d03-4d66-ac34-c874ffa9934f"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "efa2f473-a9c8-4602-90e5-5c85a6452c0a",
+              "leftValue": "={{ $json.publishYoutube }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8f541a88-1865-46af-a25c-d84558cff77c",
+      "name": "¿YouTube?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "={{ $json.ytTitle }}",
+        "regionCode": "={{ $json.cfg.youtubeRegion }}",
+        "categoryId": "={{ $json.cfg.youtubeCategoryId }}",
+        "binaryProperty": "video",
+        "options": {
+          "description": "={{ $json.ytDescription }}",
+          "privacyStatus": "={{ $json.privacyStatus }}",
+          "tags": "={{ $json.tags }}",
+          "selfDeclaredMadeForKids": false,
+          "notifySubscribers": true
+        }
+      },
+      "id": "864af597-9431-4afe-b2ad-4c088c807aea",
+      "name": "YouTube: subir Short",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [
+        1980,
+        280
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $input.first().json;\nreturn [{ json: { platform: 'youtube', ok: true, videoId: r.id, url: r.id ? `https://youtube.com/shorts/${r.id}` : '' } }];"
+      },
+      "id": "b900ec23-4c4c-4ed8-8f54-4cae276b2643",
+      "name": "YouTube: resultado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Registra el fallo de esta red sin detener las demás.\nconst e = $input.first().json;\nreturn [{ json: { platform: 'youtube', ok: false, error: e.error?.message || e.error || e.message || JSON.stringify(e).slice(0, 500) } }];"
+      },
+      "id": "0f7f75ea-38b9-41a7-a9d0-e7334b15a7e4",
+      "name": "YouTube: registrar fallo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "00af5568-c67a-4205-ba39-737534200a4b",
+              "leftValue": "={{ $json.publishInstagram }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a16e8c12-58c6-4ceb-80ed-e05cef470596",
+      "name": "¿Instagram?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Crea el contenedor del Reel en modo \"resumable\": el video se sube como archivo\n// (no hace falta que tu PC tenga una URL pública).\nconst p = $input.first();\nconst c = p.json.cfg;\nif (!c.instagramUserId || !c.instagramToken) throw new Error('Configura INSTAGRAM_USER_ID e INSTAGRAM_TOKEN en \"Validar y preparar\"');\nconst res = await this.helpers.httpRequest({\n  method: 'POST',\n  url: `https://graph.facebook.com/${c.graphVersion}/${c.instagramUserId}/media`,\n  qs: {\n    media_type: 'REELS',\n    upload_type: 'resumable',\n    caption: p.json.caption,\n    share_to_feed: 'true',\n    access_token: c.instagramToken,\n  },\n  json: true,\n});\nif (!res || !res.id || !res.uri) throw new Error('Instagram no devolvió el contenedor: ' + JSON.stringify(res));\nreturn [{ json: { ...p.json, igContainerId: res.id, igUploadUri: res.uri }, binary: p.binary }];"
+      },
+      "id": "3ab480d0-fd4f-4989-9291-cbcbbbf4a7c4",
+      "name": "Instagram: crear contenedor",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        600
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.igUploadUri }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=OAuth {{ $json.cfg.instagramToken }}"
+            },
+            {
+              "name": "offset",
+              "value": "0"
+            },
+            {
+              "name": "file_size",
+              "value": "={{ $json.videoBytes }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "video",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "f94212ee-fd4c-4db6-a484-2beca9678e70",
+      "name": "Instagram: subir video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        560
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 30,
+        "unit": "seconds"
+      },
+      "id": "910b9afb-8af4-428c-a185-888f8a76a839",
+      "name": "Instagram: esperar procesamiento",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2420,
+        520
+      ],
+      "webhookId": "d7acc91c-2d83-4d10-be94-044a8b152d83"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Espera a que Instagram procese el video y lo publica.\nconst prev = $('Instagram: crear contenedor').first().json;\nconst c = prev.cfg;\nconst base = `https://graph.facebook.com/${c.graphVersion}`;\nconst sleep = ms => new Promise(r => setTimeout(r, ms));\n\nlet status = '';\nfor (let i = 0; i < 24; i++) {\n  const st = await this.helpers.httpRequest({\n    method: 'GET', url: `${base}/${prev.igContainerId}`,\n    qs: { fields: 'status_code,status', access_token: c.instagramToken }, json: true,\n  });\n  status = st.status_code;\n  if (status === 'FINISHED') break;\n  if (status === 'ERROR' || status === 'EXPIRED') throw new Error('Instagram rechazó el video: ' + JSON.stringify(st));\n  await sleep(10000);\n}\nif (status !== 'FINISHED') throw new Error('Instagram sigue procesando el video tras 4 min (contenedor ' + prev.igContainerId + ')');\n\nconst pub = await this.helpers.httpRequest({\n  method: 'POST', url: `${base}/${c.instagramUserId}/media_publish`,\n  qs: { creation_id: prev.igContainerId, access_token: c.instagramToken }, json: true,\n});\nlet permalink = '';\ntry {\n  const m = await this.helpers.httpRequest({ method: 'GET', url: `${base}/${pub.id}`, qs: { fields: 'permalink', access_token: c.instagramToken }, json: true });\n  permalink = m.permalink || '';\n} catch {}\nreturn [{ json: { platform: 'instagram', ok: true, mediaId: pub.id, url: permalink } }];"
+      },
+      "id": "624b7f33-15c2-4d4c-be4a-2e1b4967878d",
+      "name": "Instagram: publicar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        520
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Registra el fallo de esta red sin detener las demás.\nconst e = $input.first().json;\nreturn [{ json: { platform: 'instagram', ok: false, error: e.error?.message || e.error || e.message || JSON.stringify(e).slice(0, 500) } }];"
+      },
+      "id": "471fcfed-4054-4663-8d7d-371ac6e892bd",
+      "name": "Instagram: registrar fallo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "b6495f1f-615f-4e69-8ae9-d430e13c98e1",
+              "leftValue": "={{ $json.publishTiktok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ce06e274-9090-4abc-8247-a8b1abe85a34",
+      "name": "¿TikTok?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Renueva el token de TikTok, consulta la cuenta e inicia la subida del archivo.\nconst p = $input.first();\nconst c = p.json.cfg;\nconst store = $getWorkflowStaticData('global');\nconst refresh = store.tiktokRefreshToken || c.tiktokRefreshToken;\nif (!c.tiktokClientKey || !c.tiktokClientSecret || !refresh) throw new Error('Configura TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET y TIKTOK_REFRESH_TOKEN en \"Validar y preparar\"');\n\nconst form = o => Object.entries(o).map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');\nlet tok = await this.helpers.httpRequest({\n  method: 'POST', url: 'https://open.tiktokapis.com/v2/oauth/token/',\n  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n  body: form({ client_key: c.tiktokClientKey, client_secret: c.tiktokClientSecret, grant_type: 'refresh_token', refresh_token: refresh }),\n});\nif (typeof tok === 'string') tok = JSON.parse(tok);\nif (!tok.access_token) throw new Error('TikTok no renovó el token: ' + JSON.stringify(tok));\nstore.tiktokRefreshToken = tok.refresh_token || refresh; // se guarda para la próxima vez\n\nconst auth = { Authorization: `Bearer ${tok.access_token}`, 'Content-Type': 'application/json; charset=UTF-8' };\nconst size = p.json.videoBytes;\nif (size > 64 * 1024 * 1024) throw new Error('El video supera 64 MB (límite de subida en un solo bloque)');\nconst source_info = { source: 'FILE_UPLOAD', video_size: size, chunk_size: size, total_chunk_count: 1 };\n\nlet init;\nif (c.tiktokMode === 'direct') {\n  const info = await this.helpers.httpRequest({ method: 'POST', url: 'https://open.tiktokapis.com/v2/post/publish/creator_info/query/', headers: auth, body: {}, json: true });\n  const options = info?.data?.privacy_level_options || [];\n  const privacy = options.includes(c.tiktokPrivacy) ? c.tiktokPrivacy : (options.includes('SELF_ONLY') ? 'SELF_ONLY' : options[0]);\n  init = await this.helpers.httpRequest({\n    method: 'POST', url: 'https://open.tiktokapis.com/v2/post/publish/video/init/', headers: auth, json: true,\n    body: { post_info: { title: p.json.caption, privacy_level: privacy, disable_duet: false, disable_comment: false, disable_stitch: false, video_cover_timestamp_ms: 1000 }, source_info },\n  });\n} else {\n  init = await this.helpers.httpRequest({\n    method: 'POST', url: 'https://open.tiktokapis.com/v2/post/publish/inbox/video/init/', headers: auth, json: true,\n    body: { source_info },\n  });\n}\nconst d = init?.data || {};\nif (!d.upload_url || !d.publish_id) throw new Error('TikTok no inició la subida: ' + JSON.stringify(init));\nreturn [{\n  json: { ...p.json, ttAccessToken: tok.access_token, ttPublishId: d.publish_id, ttUploadUrl: d.upload_url, ttContentRange: `bytes 0-${size - 1}/${size}` },\n  binary: p.binary,\n}];"
+      },
+      "id": "28901471-a232-45fe-8ff3-f68fee47f034",
+      "name": "TikTok: iniciar subida",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        920
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $json.ttUploadUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "video/mp4"
+            },
+            {
+              "name": "Content-Range",
+              "value": "={{ $json.ttContentRange }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "video",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "5a84cf99-969e-4537-8fb1-0c7d4d3db7bd",
+      "name": "TikTok: subir video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        880
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Consulta el estado hasta que TikTok termine de procesar.\nconst prev = $('TikTok: iniciar subida').first().json;\nconst sleep = ms => new Promise(r => setTimeout(r, ms));\nlet st = {};\nfor (let i = 0; i < 20; i++) {\n  await sleep(8000);\n  st = await this.helpers.httpRequest({\n    method: 'POST', url: 'https://open.tiktokapis.com/v2/post/publish/status/fetch/',\n    headers: { Authorization: `Bearer ${prev.ttAccessToken}`, 'Content-Type': 'application/json; charset=UTF-8' },\n    body: { publish_id: prev.ttPublishId }, json: true,\n  });\n  const s = st?.data?.status;\n  if (s === 'PUBLISH_COMPLETE' || s === 'SEND_TO_USER_INBOX') {\n    return [{ json: { platform: 'tiktok', ok: true, status: s, publishId: prev.ttPublishId,\n      note: s === 'SEND_TO_USER_INBOX' ? 'El video está en tus borradores/notificaciones de TikTok: ábrelo en la app para publicarlo.' : 'Publicado' } }];\n  }\n  if (s === 'FAILED') throw new Error('TikTok rechazó el video: ' + JSON.stringify(st.data));\n}\nreturn [{ json: { platform: 'tiktok', ok: true, status: st?.data?.status || 'PROCESSING', publishId: prev.ttPublishId, note: 'TikTok sigue procesando; revisa la app en unos minutos.' } }];"
+      },
+      "id": "46eadc02-e1e0-44a4-a918-00e472471d65",
+      "name": "TikTok: confirmar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        880
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Registra el fallo de esta red sin detener las demás.\nconst e = $input.first().json;\nreturn [{ json: { platform: 'tiktok', ok: false, error: e.error?.message || e.error || e.message || JSON.stringify(e).slice(0, 500) } }];"
+      },
+      "id": "17833887-ef7e-4599-8eb7-41e4a58e6df5",
+      "name": "TikTok: registrar fallo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        1060
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Viral Shorts → YouTube · Instagram · TikTok\n\n1. La app envía el MP4 + título, descripción y hashtags a este webhook.\n2. Responde 202 de inmediato y publica en segundo plano.\n3. Si viene una fecha programada, espera hasta esa hora (n8n debe estar encendido).\n4. Cada red es independiente: si una falla, las otras siguen.\n\n**Configura todo en el nodo \"Validar y preparar\"** (bloque CONFIG) y la credencial de YouTube en los dos nodos de YouTube.\n\nURL para la app: `http://localhost:5678/webhook/viral-shorts-publish`",
+        "height": 380,
+        "width": 520,
+        "color": 4
+      },
+      "id": "2f27a7e4-59ce-44ad-88aa-77aedb151541",
+      "name": "Cómo funciona",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -120
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook: app Viral Shorts": {
+      "main": [
+        [
+          {
+            "node": "Validar y preparar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar y preparar": {
+      "main": [
+        [
+          {
+            "node": "¿Autorizado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Autorizado?": {
+      "main": [
+        [
+          {
+            "node": "Responder 202 (aceptado)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Responder 202 (aceptado)": {
+      "main": [
+        [
+          {
+            "node": "¿Eliminar Short?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Eliminar Short?": {
+      "main": [
+        [
+          {
+            "node": "YouTube: eliminar Short",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "¿Prueba / DRY_RUN?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Prueba / DRY_RUN?": {
+      "main": [
+        [
+          {
+            "node": "Resumen de prueba",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "¿Programado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Programado?": {
+      "main": [
+        [
+          {
+            "node": "Esperar hora programada",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "¿YouTube?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "¿Instagram?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "¿TikTok?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Esperar hora programada": {
+      "main": [
+        [
+          {
+            "node": "¿YouTube?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "¿Instagram?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "¿TikTok?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿YouTube?": {
+      "main": [
+        [
+          {
+            "node": "YouTube: subir Short",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube: subir Short": {
+      "main": [
+        [
+          {
+            "node": "YouTube: resultado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "YouTube: registrar fallo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Instagram?": {
+      "main": [
+        [
+          {
+            "node": "Instagram: crear contenedor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Instagram: crear contenedor": {
+      "main": [
+        [
+          {
+            "node": "Instagram: subir video",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Instagram: registrar fallo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Instagram: subir video": {
+      "main": [
+        [
+          {
+            "node": "Instagram: esperar procesamiento",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Instagram: registrar fallo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Instagram: esperar procesamiento": {
+      "main": [
+        [
+          {
+            "node": "Instagram: publicar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Instagram: publicar": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Instagram: registrar fallo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿TikTok?": {
+      "main": [
+        [
+          {
+            "node": "TikTok: iniciar subida",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TikTok: iniciar subida": {
+      "main": [
+        [
+          {
+            "node": "TikTok: subir video",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "TikTok: registrar fallo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TikTok: subir video": {
+      "main": [
+        [
+          {
+            "node": "TikTok: confirmar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "TikTok: registrar fallo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TikTok: confirmar": {
+      "main": [
+        [],
+        [
+          {
+            "node": "TikTok: registrar fallo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
