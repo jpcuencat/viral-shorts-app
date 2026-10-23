@@ -189,7 +189,9 @@ class VideoService {
             filters.push(`setsar=1`)
             // Tarjetas informativas: zoom muy suave (máx. 3%) para no cortar el texto de los márgenes
             const isNewsCard = path.basename(imagePath).startsWith('card_')
-            const zoomExpr = isNewsCard ? 'min(zoom+0.0004,1.03)' : 'min(zoom+0.0015,1.15)'
+            // Fotos subidas por el usuario: zoom suave (máx. 6%) para no cortar la foto
+            const isUserPhoto = path.basename(imagePath).startsWith('photo_')
+            const zoomExpr = isNewsCard ? 'min(zoom+0.0004,1.03)' : isUserPhoto ? 'min(zoom+0.0008,1.06)' : 'min(zoom+0.0015,1.15)'
             filters.push(`zoompan=z='${zoomExpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=${width}x${height}:fps=${fps}`)
             filters.push(`drawbox=x=0:y=1420:w=${width}:h=500:color=black@0.25:t=fill`)
             filters.push(`setsar=1`)

@@ -1,4 +1,5 @@
 import axios from 'axios'
+import sharp from 'sharp'
 import path from 'path'
 import fs from 'fs/promises'
 import fsSync from 'fs'
@@ -22,7 +23,7 @@ export type { VaultEntry }
 
 export type VisualGenerationMode = 'hybrid' | 'real_video' | 'ai_images'
 
-export type VisualSourceKind = 'custom_video' | 'real_video' | 'ai_image' | 'news_card'
+export type VisualSourceKind = 'custom_video' | 'custom_photo' | 'real_video' | 'ai_image' | 'news_card'
 
 export interface VisualResult {
     imagePath: string
@@ -531,6 +532,61 @@ Respond ONLY with JSON: {"valid": bool, "has_overlay_text": bool, "has_logo_or_w
             fromVault: true,
             videoStartTime: startSec,
             kind: 'custom_video'
+        }
+    }
+
+    /**
+     * Usa una FOTO limpia subida por el usuario para una escena.
+     * Se compone en 1080x1920 sin deformar ni recortar la foto: la foto completa al centro (zona superior,
+     * libre la franja de subtítulos) sobre un fondo desenfocado de la misma foto.
+     * Solo acepta archivos dentro de public/custom-photos.
+     */
+    async useUploadedPhoto(params: { publicPath: string }): Promise<VisualResult> {
+        const photosDir = path.join(process.cwd(), 'public', 'custom-photos')
+        const resolved = path.resolve(path.join(process.cwd(), 'public', params.publicPath.replace(/^\/+/, '')))
+        if (!resolved.startsWith(photosDir + path.sep)) {
+            throw new Error('Ruta de foto subida no válida.')
+        }
+        if (!fsSync.existsSync(resolved)) {
+            throw new Error('No se encontró la foto subida. Vuelve a subirla.')
+        }
+
+        const W = 1080, H = 1920
+        // Zona de la foto: deja libre la franja de subtítulos (y >= 1400)
+        const boxW = 1000, boxH = 1180, boxTop = 190
+        let meta: { width?: number; height?: number }
+        try {
+            meta = await sharp(resolved).rotate().metadata()
+        } catch {
+            throw new Error('No se pudo leer la foto (¿formato dañado?).')
+        }
+        if (!meta.width || !meta.height || Math.min(meta.width, meta.height) < 300) {
+            throw new Error('La foto es demasiado pequeña (mínimo 300 px por lado).')
+        }
+
+        const background = await sharp(resolved).rotate()
+            .resize(W, H, { fit: 'cover' })
+            .blur(28)
+            .modulate({ brightness: 0.62 })
+            .toBuffer()
+        const foreground = await sharp(resolved).rotate()
+            .resize(boxW, boxH, { fit: 'inside', withoutEnlargement: false })
+            .toBuffer({ resolveWithObject: true })
+        const fgLeft = Math.round((W - foreground.info.width) / 2)
+        const fgTop = Math.round(boxTop + (boxH - foreground.info.height) / 2)
+
+        const outName = `photo_${uuidv4().slice(0, 8)}.jpg`
+        const outPath = path.join(photosDir, outName)
+        await sharp(background)
+            .composite([{ input: foreground.data, left: fgLeft, top: fgTop }])
+            .jpeg({ quality: 92 })
+            .toFile(outPath)
+
+        return {
+            imagePath: outPath,
+            sourceLabel: `Foto subida por el usuario: ${path.basename(resolved)}`,
+            fromVault: true,
+            kind: 'custom_photo'
         }
     }
 

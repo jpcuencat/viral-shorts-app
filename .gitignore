@@ -63,6 +63,7 @@ inspect-*.js
 # respaldos locales
 .backup-fase1/
 public/custom-videos/*
+public/custom-photos/*
 
 # configuración local con tokens de redes y registro de publicaciones
 /data/

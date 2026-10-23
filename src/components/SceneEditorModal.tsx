@@ -22,6 +22,7 @@ import {
     Link2,
     Upload,
     X,
+    Camera,
 } from 'lucide-react'
 import {
     getReelSceneManifest,
@@ -63,6 +64,68 @@ export function SceneEditorModal({ reelId, scriptId }: SceneEditorModalProps) {
     const [customStarts, setCustomStarts] = useState<Record<number, string>>({})
     const [uploads, setUploads] = useState<Record<number, { publicPath: string; name: string }>>({})
     const [uploadingIdx, setUploadingIdx] = useState<number | null>(null)
+    const [photos, setPhotos] = useState<Record<number, { publicPath: string; name: string; preview: string }>>({})
+    const [uploadingPhotoIdx, setUploadingPhotoIdx] = useState<number | null>(null)
+
+    async function handlePhotoUpload(sceneIndex: number, file: File | undefined) {
+        if (!file) return
+        if (!/^image\/(jpeg|png|webp)$/.test(file.type)) {
+            toast.error('La foto debe ser JPG, PNG o WEBP')
+            return
+        }
+        setUploadingPhotoIdx(sceneIndex)
+        try {
+            const formData = new FormData()
+            formData.append('file', file)
+            const res = await fetch('/api/upload-video', { method: 'POST', body: formData })
+            const data = await res.json().catch(() => ({}))
+            if (res.ok && data.success && data.publicPath) {
+                setPhotos((prev) => ({ ...prev, [sceneIndex]: { publicPath: data.publicPath, name: file.name, preview: URL.createObjectURL(file) } }))
+                toast.success(`Foto cargada para la escena #${sceneIndex + 1}`)
+            } else {
+                toast.error(data.error || 'No se pudo subir la foto')
+            }
+        } catch (err) {
+            console.error(err)
+            toast.error('Error subiendo la foto')
+        } finally {
+            setUploadingPhotoIdx(null)
+        }
+    }
+
+    function clearPhoto(sceneIndex: number) {
+        setPhotos((prev) => {
+            const next = { ...prev }
+            if (next[sceneIndex]?.preview) URL.revokeObjectURL(next[sceneIndex].preview)
+            delete next[sceneIndex]
+            return next
+        })
+    }
+
+    async function handleUsePhoto(sceneIndex: number) {
+        const photo = photos[sceneIndex]
+        if (!photo) return
+        setReplacingIdx(sceneIndex)
+        try {
+            const res = await replaceSingleReelScene(reelId, scriptId, sceneIndex, {
+                visualMode: 'ai_images',
+                customPhotoFile: photo.publicPath,
+            })
+            if (res.success) {
+                toast.success(`¡Escena #${sceneIndex + 1} actualizada con tu foto!`)
+                clearPhoto(sceneIndex)
+                await loadManifest()
+                router.refresh()
+            } else {
+                toast.error(res.error || 'No se pudo usar la foto')
+            }
+        } catch (err) {
+            console.error(err)
+            toast.error('Error actualizando la escena con la foto')
+        } finally {
+            setReplacingIdx(null)
+        }
+    }
 
     async function handleUpload(sceneIndex: number, file: File | undefined) {
         if (!file) return
@@ -174,7 +237,7 @@ export function SceneEditorModal({ reelId, scriptId }: SceneEditorModalProps) {
                         Editor de Escenas Individuales
                     </DialogTitle>
                     <DialogDescription className="leading-relaxed">
-                        Si una escena específica del Reel no te convence, reemplázala aquí por una nueva imagen IA, un clip buscado automáticamente o un video tuyo indicado por URL. El video se re-ensambla sin perder las demás escenas ni volver a generar el audio.
+                        Si una escena específica del Reel no te convence, reemplázala aquí por una nueva imagen IA, un clip buscado automáticamente, un video tuyo (URL o archivo) o una foto limpia tuya. El video se re-ensambla sin perder las demás escenas ni volver a generar el audio.
                     </DialogDescription>
                 </DialogHeader>
 
@@ -197,11 +260,13 @@ export function SceneEditorModal({ reelId, scriptId }: SceneEditorModalProps) {
                         {scenes.map((scene, idx) => {
                             const isVideoClip = /\.(mp4|webm|mov)$/i.test(scene.imagePath)
                             const isNewsCard = /[\\/]card_[^\\/]+\.jpg$/i.test(scene.imagePath)
+                            const isUserPhoto = /[\\/]photo_[^\\/]+\.jpg$/i.test(scene.imagePath)
                             const isBusy = replacingIdx === idx
                             const uploaded = uploads[idx]
                             const hasUrl = Boolean((customUrls[idx] || '').trim())
                             const hasOwnVideo = Boolean(uploaded) || hasUrl
-                            const busyAny = replacingIdx !== null || uploadingIdx !== null
+                            const busyAny = replacingIdx !== null || uploadingIdx !== null || uploadingPhotoIdx !== null
+                            const photo = photos[idx]
 
                             return (
                                 <div
@@ -218,12 +283,14 @@ export function SceneEditorModal({ reelId, scriptId }: SceneEditorModalProps) {
                                                 className={
                                                     isVideoClip
                                                         ? 'border-blue-500/40 text-blue-600 text-[10px]'
+                                                        : isUserPhoto
+                                                            ? 'border-emerald-500/40 text-emerald-600 text-[10px]'
                                                         : isNewsCard
                                                             ? 'border-amber-500/40 text-amber-600 text-[10px]'
                                                             : 'border-pink-500/40 text-pink-600 text-[10px]'
                                                 }
                                             >
-                                                {isVideoClip ? '🎬 Video en Movimiento' : isNewsCard ? '📰 Tarjeta informativa' : '🎨 Imagen IA 9:16'}
+                                                {isVideoClip ? '🎬 Video en Movimiento' : isNewsCard ? '📰 Tarjeta informativa' : isUserPhoto ? '📷 Foto propia' : '🎨 Imagen IA 9:16'}
                                             </Badge>
                                             <span className="text-xs text-muted-foreground">
                                                 ⏱ {scene.duration.toFixed(1)}s
@@ -350,6 +417,69 @@ export function SceneEditorModal({ reelId, scriptId }: SceneEditorModalProps) {
                                             title="Segundo del video desde el que se toma el tramo (por defecto 0:00)"
                                         />
                                     </div>
+                                    {/* Foto limpia propia para la escena */}
+                                    <div className="flex flex-col sm:flex-row gap-2 min-w-0">
+                                        {photo ? (
+                                            <div className="flex flex-1 min-w-0 items-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/5 px-2 h-10 text-xs">
+                                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                <img src={photo.preview} alt="" className="h-8 w-8 rounded object-cover shrink-0" />
+                                                <span className="truncate flex-1">{photo.name}</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => clearPhoto(idx)}
+                                                    disabled={busyAny}
+                                                    className="text-muted-foreground hover:text-foreground"
+                                                    aria-label="Quitar foto subida"
+                                                >
+                                                    <X className="h-3.5 w-3.5" />
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <p className="flex-1 min-w-0 text-[11px] text-muted-foreground self-center">
+                                                ¿Tienes una foto real y limpia de este momento? Úsala en lugar de la imagen IA.
+                                            </p>
+                                        )}
+                                        <label
+                                            className={`inline-flex items-center justify-center gap-1 rounded-md border h-8 px-2.5 text-xs shrink-0 ${
+                                                busyAny ? 'opacity-50 pointer-events-none' : 'cursor-pointer hover:bg-muted'
+                                            }`}
+                                            title="Subir una foto limpia desde tu equipo (jpg, png, webp)"
+                                        >
+                                            {uploadingPhotoIdx === idx ? (
+                                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                            ) : (
+                                                <Camera className="h-3.5 w-3.5 text-emerald-500" />
+                                            )}
+                                            {uploadingPhotoIdx === idx ? 'Subiendo...' : photo ? 'Cambiar foto' : 'Subir foto'}
+                                            <input
+                                                type="file"
+                                                accept="image/jpeg,image/png,image/webp"
+                                                className="hidden"
+                                                disabled={busyAny}
+                                                onChange={(e) => {
+                                                    handlePhotoUpload(idx, e.target.files?.[0])
+                                                    e.target.value = ''
+                                                }}
+                                            />
+                                        </label>
+                                        {photo && (
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                disabled={busyAny}
+                                                onClick={() => handleUsePhoto(idx)}
+                                                className="h-8 text-xs gap-1 bg-emerald-600 hover:bg-emerald-700"
+                                            >
+                                                {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
+                                                Usar foto
+                                            </Button>
+                                        )}
+                                    </div>
+                                    {photo && (
+                                        <p className="text-[11px] text-muted-foreground">
+                                            La foto se muestra completa (sin deformar ni recortar) sobre un fondo desenfocado de la misma foto, con un zoom suave. No se le aplica el filtro de textos y logos: usa una foto limpia.
+                                        </p>
+                                    )}
                                     {hasOwnVideo && (
                                         <p className="text-[11px] text-muted-foreground">
                                             Se tomarán ~{Math.ceil(scene.duration)}s del {uploaded ? 'video subido' : 'video de la URL'} desde el inicio indicado. Al usar tu propio video no se aplica el filtro automático de textos y logos: asegúrate de que el tramo esté limpio.
