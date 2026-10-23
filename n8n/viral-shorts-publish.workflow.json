@@ -20,7 +20,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// =====================================================================\n// ⚙️ CONFIGURACIÓN — edita SOLO este bloque\n// =====================================================================\nconst CONFIG = {\n  // Mismo valor que \"Secreto del Webhook\" en la app (Redes Sociales). Vacío = no se valida.\n  WEBHOOK_SECRET: '',\n  // true = no publica nada: solo registra lo que haría (para probar el flujo)\n  DRY_RUN: false,\n\n  // Redes activas\n  YOUTUBE: true,\n  INSTAGRAM: true,\n  TIKTOK: true,\n\n  // YouTube (la cuenta se elige en la credencial del nodo \"YouTube: subir Short\")\n  YOUTUBE_CATEGORY_ID: '25',   // 25 = Noticias y política\n  YOUTUBE_REGION: 'EC',\n\n  // Instagram (API de Instagram con inicio de sesión de Facebook; cuenta profesional vinculada a una página)\n  INSTAGRAM_USER_ID: '',       // ID de la cuenta de Instagram (empieza con 1784...)\n  INSTAGRAM_TOKEN: '',         // token con permisos instagram_basic + instagram_content_publish\n  GRAPH_VERSION: 'v24.0',\n\n  // TikTok (Content Posting API)\n  TIKTOK_CLIENT_KEY: '',\n  TIKTOK_CLIENT_SECRET: '',\n  TIKTOK_REFRESH_TOKEN: '',    // solo la primera vez: después se renueva y guarda solo\n  TIKTOK_MODE: 'inbox',        // 'inbox' = llega a tus borradores de TikTok (no requiere app auditada)\n                               // 'direct' = publica directo (requiere scope video.publish)\n  TIKTOK_PRIVACY: 'SELF_ONLY', // en 'direct': apps sin auditar solo pueden SELF_ONLY\n};\n// =====================================================================\n\nconst item = $input.first();\nconst headers = item.json.headers || {};\nconst body = item.json.body || {};\nconst event = String(body.event || 'reel.publish');\nconst authorized = !CONFIG.WEBHOOK_SECRET || headers['x-webhook-secret'] === CONFIG.WEBHOOK_SECRET;\n\n// Video binario (la app lo envía en el campo \"data\")\nconst keys = Object.keys(item.binary || {});\nconst videoKey = keys.includes('data') ? 'data' : keys[0];\nconst binary = {};\nlet videoBytes = 0;\nif (videoKey) {\n  binary.video = item.binary[videoKey];\n  const buf = await this.helpers.getBinaryDataBuffer(0, videoKey);\n  videoBytes = buf.length;\n}\n\nlet hashtags = [];\ntry { hashtags = JSON.parse(body.hashtags || '[]'); } catch { hashtags = String(body.hashtagsText || '').split(/[\\s,]+/).filter(Boolean); }\nhashtags = hashtags.map(h => String(h).trim()).filter(Boolean).map(h => (h.startsWith('#') ? h : '#' + h));\nif (!hashtags.some(h => h.toLowerCase() === '#shorts')) hashtags.push('#Shorts');\n\nconst title = String(body.title || 'Nuevo video').trim();\nconst description = String(body.description || '').trim();\nconst cut = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);\n\nconst ytTitle = cut(title.includes('#Shorts') ? title : `${title} #Shorts`, 100);\nconst ytDescription = cut(`${description}\\n\\n${hashtags.join(' ')}`.trim(), 4900);\nconst caption = cut(`${title}\\n\\n${description}\\n\\n${hashtags.slice(0, 30).join(' ')}`.trim(), 2200);\n\nconst scheduledAt = String(body.scheduledAt || '').trim();\nconst scheduledMs = scheduledAt ? Date.parse(scheduledAt) : NaN;\nconst isScheduled = Number.isFinite(scheduledMs) && scheduledMs > Date.now() + 60000;\nconst isTest = event === 'reel.publish.test';\nconst dryRun = CONFIG.DRY_RUN || isTest;\n\nreturn [{\n  json: {\n    authorized,\n    event,\n    isDelete: event === 'reel.delete',\n    isTest,\n    reelId: body.reelId || '',\n    title, ytTitle, ytDescription, caption,\n    tags: hashtags.map(h => h.replace(/^#/, '')).join(','),\n    privacyStatus: ['public', 'unlisted', 'private'].includes(body.privacyStatus) ? body.privacyStatus : 'public',\n    scheduledAt: isScheduled ? new Date(scheduledMs).toISOString() : '',\n    isScheduled,\n    youtubeVideoId: String(body.youtubeVideoId || '').trim(),\n    videoBytes,\n    hasVideo: Boolean(videoKey),\n    publishYoutube: CONFIG.YOUTUBE && !dryRun && Boolean(videoKey),\n    publishInstagram: CONFIG.INSTAGRAM && !dryRun && Boolean(videoKey),\n    publishTiktok: CONFIG.TIKTOK && !dryRun && Boolean(videoKey),\n    cfg: {\n      dryRun,\n      youtubeCategoryId: CONFIG.YOUTUBE_CATEGORY_ID,\n      youtubeRegion: CONFIG.YOUTUBE_REGION,\n      instagramUserId: CONFIG.INSTAGRAM_USER_ID,\n      instagramToken: CONFIG.INSTAGRAM_TOKEN,\n      graphVersion: CONFIG.GRAPH_VERSION,\n      tiktokClientKey: CONFIG.TIKTOK_CLIENT_KEY,\n      tiktokClientSecret: CONFIG.TIKTOK_CLIENT_SECRET,\n      tiktokRefreshToken: CONFIG.TIKTOK_REFRESH_TOKEN,\n      tiktokMode: CONFIG.TIKTOK_MODE,\n      tiktokPrivacy: CONFIG.TIKTOK_PRIVACY,\n    },\n  },\n  binary,\n}];"
+        "jsCode": "// =====================================================================\n// ⚙️ CONFIGURACIÓN — edita SOLO este bloque\n// =====================================================================\nconst CONFIG = {\n  // Mismo valor que \"Secreto del Webhook\" en la app (Redes Sociales). Vacío = no se valida.\n  WEBHOOK_SECRET: '',\n  // true = no publica nada: solo registra lo que haría (para probar el flujo)\n  DRY_RUN: false,\n\n  // Redes activas\n  YOUTUBE: true,\n  INSTAGRAM: true,\n  TIKTOK: true,\n\n  // YouTube (la cuenta se elige en la credencial del nodo \"YouTube: subir Short\")\n  YOUTUBE_CATEGORY_ID: '25',   // 25 = Noticias y política\n  YOUTUBE_REGION: 'EC',\n\n  // Instagram (API de Instagram con inicio de sesión de Facebook; cuenta profesional vinculada a una página)\n  INSTAGRAM_USER_ID: '',       // ID de la cuenta de Instagram (empieza con 1784...)\n  INSTAGRAM_TOKEN: '',         // token con permisos instagram_basic + instagram_content_publish\n  GRAPH_VERSION: 'v24.0',\n\n  // TikTok (Content Posting API)\n  TIKTOK_CLIENT_KEY: '',\n  TIKTOK_CLIENT_SECRET: '',\n  TIKTOK_REFRESH_TOKEN: '',    // solo la primera vez: después se renueva y guarda solo\n  TIKTOK_MODE: 'inbox',        // 'inbox' = llega a tus borradores de TikTok (no requiere app auditada)\n                               // 'direct' = publica directo (requiere scope video.publish)\n  TIKTOK_PRIVACY: 'SELF_ONLY', // en 'direct': apps sin auditar solo pueden SELF_ONLY\n\n  // Telegram: te envía el texto de cada video para pegarlo en TikTok\n  TELEGRAM_BOT_TOKEN: '',      // ← PEGA AQUÍ el token que te dio @BotFather\n  TELEGRAM_CHAT_ID: '',        // vacío = se detecta solo cuando pulsas \"Iniciar\" en tu bot\n};\n// =====================================================================\n\nconst item = $input.first();\nconst headers = item.json.headers || {};\nconst body = item.json.body || {};\nconst event = String(body.event || 'reel.publish');\nconst authorized = !CONFIG.WEBHOOK_SECRET || headers['x-webhook-secret'] === CONFIG.WEBHOOK_SECRET;\n\n// Video binario (la app lo envía en el campo \"data\")\nconst keys = Object.keys(item.binary || {});\nconst videoKey = keys.includes('data') ? 'data' : keys[0];\nconst binary = {};\nlet videoBytes = 0;\nif (videoKey) {\n  binary.video = item.binary[videoKey];\n  const buf = await this.helpers.getBinaryDataBuffer(0, videoKey);\n  videoBytes = buf.length;\n}\n\nlet hashtags = [];\ntry { hashtags = JSON.parse(body.hashtags || '[]'); } catch { hashtags = String(body.hashtagsText || '').split(/[\\s,]+/).filter(Boolean); }\nhashtags = hashtags.map(h => String(h).trim()).filter(Boolean).map(h => (h.startsWith('#') ? h : '#' + h));\nif (!hashtags.some(h => h.toLowerCase() === '#shorts')) hashtags.push('#Shorts');\n\nconst title = String(body.title || 'Nuevo video').trim();\nconst description = String(body.description || '').trim();\nconst cut = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);\n\nconst ytTitle = cut(title.includes('#Shorts') ? title : `${title} #Shorts`, 100);\nconst ytDescription = cut(`${description}\\n\\n${hashtags.join(' ')}`.trim(), 4900);\nconst caption = cut(`${title}\\n\\n${description}\\n\\n${hashtags.slice(0, 30).join(' ')}`.trim(), 2200);\n\nconst scheduledAt = String(body.scheduledAt || '').trim();\nconst scheduledMs = scheduledAt ? Date.parse(scheduledAt) : NaN;\nconst isScheduled = Number.isFinite(scheduledMs) && scheduledMs > Date.now() + 60000;\nconst isTest = event === 'reel.publish.test';\nconst dryRun = CONFIG.DRY_RUN || isTest;\n\nreturn [{\n  json: {\n    authorized,\n    event,\n    isDelete: event === 'reel.delete',\n    isTest,\n    reelId: body.reelId || '',\n    title, ytTitle, ytDescription, caption,\n    tags: hashtags.map(h => h.replace(/^#/, '')).join(','),\n    privacyStatus: ['public', 'unlisted', 'private'].includes(body.privacyStatus) ? body.privacyStatus : 'public',\n    scheduledAt: isScheduled ? new Date(scheduledMs).toISOString() : '',\n    isScheduled,\n    youtubeVideoId: String(body.youtubeVideoId || '').trim(),\n    videoBytes,\n    hasVideo: Boolean(videoKey),\n    publishYoutube: CONFIG.YOUTUBE && !dryRun && Boolean(videoKey),\n    publishInstagram: CONFIG.INSTAGRAM && !dryRun && Boolean(videoKey),\n    publishTiktok: CONFIG.TIKTOK && !dryRun && Boolean(videoKey),\n    cfg: {\n      dryRun,\n      youtubeCategoryId: CONFIG.YOUTUBE_CATEGORY_ID,\n      youtubeRegion: CONFIG.YOUTUBE_REGION,\n      instagramUserId: CONFIG.INSTAGRAM_USER_ID,\n      instagramToken: CONFIG.INSTAGRAM_TOKEN,\n      graphVersion: CONFIG.GRAPH_VERSION,\n      tiktokClientKey: CONFIG.TIKTOK_CLIENT_KEY,\n      tiktokClientSecret: CONFIG.TIKTOK_CLIENT_SECRET,\n      tiktokRefreshToken: CONFIG.TIKTOK_REFRESH_TOKEN,\n      tiktokMode: CONFIG.TIKTOK_MODE,\n      tiktokPrivacy: CONFIG.TIKTOK_PRIVACY,\n      telegramToken: CONFIG.TELEGRAM_BOT_TOKEN,\n      telegramChatId: CONFIG.TELEGRAM_CHAT_ID,\n    },\n  },\n  binary,\n}];"
       },
       "id": "ca474b5d-c1d7-45fb-948f-e6885f8405e8",
       "name": "Validar y preparar",
@@ -600,6 +600,34 @@
       "onError": "continueErrorOutput",
       "notes": "Fija la audiencia \"No es contenido para niños\" y la privacidad después de subir. Sin esto YouTube puede dejar el Short como borrador.",
       "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Envía a tu Telegram el texto del video para pegarlo en TikTok (el modo bandeja no acepta texto).\nconst p = $('Validar y preparar').first().json;\nconst c = p.cfg;\nif (!c.telegramToken) return [{ json: { telegram: 'sin configurar (TELEGRAM_BOT_TOKEN vacío)' } }];\nconst api = `https://api.telegram.org/bot${c.telegramToken}`;\nconst store = $getWorkflowStaticData('global');\nlet chatId = c.telegramChatId || store.telegramChatId;\nif (!chatId) {\n  const up = await this.helpers.httpRequest({ method: 'GET', url: `${api}/getUpdates`, json: true });\n  const last = (up.result || []).slice().reverse().find(u => u.message && u.message.chat && u.message.chat.id);\n  if (!last) throw new Error('Abre tu bot en Telegram y pulsa \"Iniciar\" (/start) para que n8n conozca tu chat.');\n  chatId = last.message.chat.id;\n  store.telegramChatId = chatId;\n}\nconst send = text => this.helpers.httpRequest({ method: 'POST', url: `${api}/sendMessage`, body: { chat_id: chatId, text, disable_web_page_preview: true }, json: true });\nif (p.isTest || p.cfg.dryRun) {\n  await send('✅ Conexión lista. Aquí te llegará el texto de cada video para publicarlo en TikTok.');\n  return [{ json: { telegram: 'prueba enviada', chatId } }];\n}\nawait send('🎬 TikTok: \"' + p.title + '\" ya está en tu bandeja.\\nAbre la notificación en TikTok, copia el siguiente mensaje (mantén presionado → Copiar), pégalo como descripción y publica.');\nawait send(p.caption.slice(0, 2200));\nreturn [{ json: { telegram: 'enviado', chatId } }];"
+      },
+      "id": "a6c69a33-fd63-4b68-a128-5e380cd608d6",
+      "name": "Telegram: texto para TikTok",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        820
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Envía a tu Telegram el texto del video para pegarlo en TikTok (el modo bandeja no acepta texto).\nconst p = $('Validar y preparar').first().json;\nconst c = p.cfg;\nif (!c.telegramToken) return [{ json: { telegram: 'sin configurar (TELEGRAM_BOT_TOKEN vacío)' } }];\nconst api = `https://api.telegram.org/bot${c.telegramToken}`;\nconst store = $getWorkflowStaticData('global');\nlet chatId = c.telegramChatId || store.telegramChatId;\nif (!chatId) {\n  const up = await this.helpers.httpRequest({ method: 'GET', url: `${api}/getUpdates`, json: true });\n  const last = (up.result || []).slice().reverse().find(u => u.message && u.message.chat && u.message.chat.id);\n  if (!last) throw new Error('Abre tu bot en Telegram y pulsa \"Iniciar\" (/start) para que n8n conozca tu chat.');\n  chatId = last.message.chat.id;\n  store.telegramChatId = chatId;\n}\nconst send = text => this.helpers.httpRequest({ method: 'POST', url: `${api}/sendMessage`, body: { chat_id: chatId, text, disable_web_page_preview: true }, json: true });\nif (p.isTest || p.cfg.dryRun) {\n  await send('✅ Conexión lista. Aquí te llegará el texto de cada video para publicarlo en TikTok.');\n  return [{ json: { telegram: 'prueba enviada', chatId } }];\n}\nawait send('🎬 TikTok: \"' + p.title + '\" ya está en tu bandeja.\\nAbre la notificación en TikTok, copia el siguiente mensaje (mantén presionado → Copiar), pégalo como descripción y publica.');\nawait send(p.caption.slice(0, 2200));\nreturn [{ json: { telegram: 'enviado', chatId } }];"
+      },
+      "id": "1a592b2d-ad22-467e-a699-b637d0a67af3",
+      "name": "Telegram: aviso de prueba",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        200
+      ],
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -887,7 +915,13 @@
     },
     "TikTok: confirmar": {
       "main": [
-        [],
+        [
+          {
+            "node": "Telegram: texto para TikTok",
+            "type": "main",
+            "index": 0
+          }
+        ],
         [
           {
             "node": "TikTok: registrar fallo",
@@ -909,6 +943,17 @@
         [
           {
             "node": "YouTube: registrar fallo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resumen de prueba": {
+      "main": [
+        [
+          {
+            "node": "Telegram: aviso de prueba",
             "type": "main",
             "index": 0
           }
