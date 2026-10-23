@@ -41,6 +41,7 @@ export default async function RendimientoPage() {
 
     const totals = Object.keys(PLATFORM_LABEL).map(p => ({
         p, views: rows.filter(r => r.platform === p).reduce((s, r) => s + (r.views || 0), 0), posts: rows.filter(r => r.platform === p).length,
+        noData: rows.filter(r => r.platform === p).every(r => r.views === null),
     })).filter(t => t.posts > 0)
     const lastFetch = rows.map(r => r.fetched_at).filter(Boolean).sort().pop()
 
@@ -68,8 +69,10 @@ export default async function RendimientoPage() {
                 {totals.map(t => (
                     <Card key={t.p}>
                         <CardHeader className="pb-2"><CardDescription>{PLATFORM_LABEL[t.p]}</CardDescription>
-                            <CardTitle className="text-2xl">{fmt(t.views)}</CardTitle></CardHeader>
-                        <CardContent className="text-xs text-muted-foreground">vistas en {t.posts} publicaciones</CardContent>
+                            <CardTitle className="text-2xl">{t.noData ? '—' : fmt(t.views)}</CardTitle></CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">
+                            {t.noData ? `${t.posts} publicaciones · vistas no disponibles (falta permiso de estadísticas en el token)` : `vistas en ${t.posts} publicaciones`}
+                        </CardContent>
                     </Card>
                 ))}
             </div>

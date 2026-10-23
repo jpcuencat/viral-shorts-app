@@ -20,6 +20,13 @@ n8n → **Workflows → ⋯ → Import from File** → elige el JSON.
 2. En la app → **Redes Sociales**: pega esa URL en *Webhook de n8n* y el mismo secreto que pusiste en `CONFIG.WEBHOOK_SECRET`.
 3. Pulsa **Probar conexión**: es un evento de prueba, no publica nada (ver n8n → Executions).
 
+## 4. Métricas y aprendizaje
+- Tras cada publicación, n8n avisa a la app (`/api/n8n/publication-result`) con el ID del video en cada red.
+- Cada 6 horas el nodo **Cada 6 horas: métricas** junta vistas, likes y comentarios de YouTube, Instagram y Facebook y los envía a `/api/n8n/metrics`. La app los muestra en **Rendimiento** y recalcula las lecciones del canal, que se usan en tendencias, guiones y plan visual.
+- `CONFIG.APP_URL`: si n8n corre en Docker usa `http://host.docker.internal:3000` (el flujo prueba las dos direcciones). `CONFIG.METRICS: false` apaga la recolección.
+- Las llamadas a la app usan el mismo `WEBHOOK_SECRET`.
+- Para que lleguen las vistas de Instagram y Facebook, el `INSTAGRAM_TOKEN` debe incluir además los permisos `instagram_manage_insights` y `read_insights`.
+
 ## Notas
 - n8n debe estar encendido para publicar y para las publicaciones programadas (espera hasta la hora indicada).
 - `DRY_RUN: true` en `CONFIG` permite probar todo el flujo sin publicar.

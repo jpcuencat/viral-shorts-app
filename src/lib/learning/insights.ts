@@ -82,7 +82,8 @@ export async function collectPerformance(db: SupabaseClient, userId: string): Pr
         let views = 0, likes = 0, comments = 0, shares = 0
         let published: number | null = null
         for (const m of ms) {
-            byPlatform[m.platform] = (byPlatform[m.platform] || 0) + num(m.views)
+            // Vistas nulas = la red no entregó el dato (p. ej. falta permiso): no se cuenta como 0
+            if (m.views !== null && m.views !== undefined) byPlatform[m.platform] = (byPlatform[m.platform] || 0) + num(m.views)
             views += num(m.views); likes += num(m.likes); comments += num(m.comments); shares += num(m.shares)
             const t = m.published_at ? Date.parse(m.published_at) : NaN
             if (Number.isFinite(t) && (published === null || t < published)) published = t
@@ -140,11 +141,16 @@ export async function generateChannelInsights(db: SupabaseClient, userId: string
         p.regenFeedback ? `el creador corrigió: ${p.regenFeedback}` : '',
     ].filter(Boolean).join(' | ')).join('\n')
 
+    const { data: pm } = await db.from('post_metrics').select('platform, views').eq('user_id', userId)
+    const noData = ['youtube', 'instagram', 'facebook', 'tiktok'].filter(pl => {
+        const rows = (pm || []).filter(r => r.platform === pl)
+        return rows.length > 0 && rows.every(r => r.views === null)
+    })
     const prompt = `Eres el analista de rendimiento de un canal de Shorts de noticias en español (marca RADAR 593, Ecuador y el mundo).
 Publica en YouTube Shorts, Instagram Reels, Facebook Reels y TikTok. Abajo tienes cada video con sus métricas reales,
 la nota del crítico IA y las correcciones del creador. Compara principalmente por VISTAS POR DÍA (los videos tienen distinta antigüedad).
 
-ESTADÍSTICAS POR CATEGORÍA: ${JSON.stringify(stats.categories)}
+${noData.length ? `REDES SIN DATOS DE VISTAS (la API aún no entrega sus estadísticas): ${noData.join(', ')}. NO concluyas que rinden poco; ignóralas en la comparación.\n` : ''}ESTADÍSTICAS POR CATEGORÍA: ${JSON.stringify(stats.categories)}
 
 VIDEOS:
 ${rows}
@@ -152,7 +158,7 @@ ${rows}
 Escribe lecciones CONCRETAS y accionables (no genéricas) que mejoren los próximos videos. Basa cada una en los datos; si hay pocos datos, dilo y baja la confianza.
 - topics_that_work / topics_to_avoid: tipos de tema y ángulos (con ejemplos de este canal).
 - hook_patterns: cómo empezar los primeros 3 segundos según lo que retuvo más.
-- title_patterns: cómo titular (palabras, longitud, nombres propios, signos). Nunca recomiendes clickbait falso.
+- title_patterns: cómo titular (palabras, longitud, nombres propios, signos). El canal tiene una regla de VERACIDAD: nunca recomiendes clickbait falso ni palabras como ESCÁNDALO/SHOCK salvo que los hechos verificados lo respalden.
 - visual_lessons: qué visuales funcionaron o fallaron (según el crítico y los resultados).
 - platform_notes: diferencias entre redes, si las hay.
 Responde SOLO con JSON: {"summary":"2 frases","topics_that_work":[],"topics_to_avoid":[],"hook_patterns":[],"title_patterns":[],"visual_lessons":[],"platform_notes":[],"confidence":"baja|media|alta"}`

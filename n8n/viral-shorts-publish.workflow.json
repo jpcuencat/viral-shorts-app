@@ -20,7 +20,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// =====================================================================\n// ⚙️ CONFIGURACIÓN — edita SOLO este bloque\n// =====================================================================\nconst CONFIG = {\n  // Mismo valor que \"Secreto del Webhook\" en la app (Redes Sociales). Vacío = no se valida.\n  WEBHOOK_SECRET: '',\n  // true = no publica nada: solo registra lo que haría (para probar el flujo)\n  DRY_RUN: false,\n\n  // Redes activas\n  YOUTUBE: true,\n  INSTAGRAM: true,\n  TIKTOK: true,\n\n  // YouTube (la cuenta se elige en la credencial del nodo \"YouTube: subir Short\")\n  YOUTUBE_CATEGORY_ID: '25',   // 25 = Noticias y política\n  YOUTUBE_REGION: 'EC',\n\n  // Instagram (API de Instagram con inicio de sesión de Facebook; cuenta profesional vinculada a una página)\n  INSTAGRAM_USER_ID: '',       // ID de la cuenta de Instagram (empieza con 1784...)\n  INSTAGRAM_TOKEN: '',         // token con permisos instagram_basic + instagram_content_publish\n  GRAPH_VERSION: 'v26.0',\n  INSTAGRAM_REELS: true,       // publica el video como Reel\n  INSTAGRAM_STORIES: true,     // además, publica el video como historia\n\n  // Página de Facebook (Reels). Usa el mismo INSTAGRAM_TOKEN: debe incluir pages_manage_posts\n  FACEBOOK: false,\n  FACEBOOK_PAGE_ID: '1500702656452606',   // página Radar 593\n\n  // TikTok (Content Posting API)\n  TIKTOK_CLIENT_KEY: '',\n  TIKTOK_CLIENT_SECRET: '',\n  TIKTOK_REFRESH_TOKEN: '',    // solo la primera vez: después se renueva y guarda solo\n  TIKTOK_MODE: 'inbox',        // 'inbox' = llega a tus borradores de TikTok (no requiere app auditada)\n                               // 'direct' = publica directo (requiere scope video.publish)\n  TIKTOK_PRIVACY: 'SELF_ONLY', // en 'direct': apps sin auditar solo pueden SELF_ONLY\n\n  // Telegram: te envía el texto de cada video para pegarlo en TikTok\n  TELEGRAM_BOT_TOKEN: '',      // ← PEGA AQUÍ el token que te dio @BotFather\n  TELEGRAM_CHAT_ID: '',        // vacío = se detecta solo cuando pulsas \"Iniciar\" en tu bot\n};\n// =====================================================================\n\nconst item = $input.first();\nconst headers = item.json.headers || {};\nconst body = item.json.body || {};\nconst event = String(body.event || 'reel.publish');\nconst authorized = !CONFIG.WEBHOOK_SECRET || headers['x-webhook-secret'] === CONFIG.WEBHOOK_SECRET;\n\n// Video binario (la app lo envía en el campo \"data\")\nconst keys = Object.keys(item.binary || {});\nconst videoKey = keys.includes('data') ? 'data' : keys[0];\nconst binary = {};\nlet videoBytes = 0;\nif (videoKey) {\n  binary.video = item.binary[videoKey];\n  const buf = await this.helpers.getBinaryDataBuffer(0, videoKey);\n  videoBytes = buf.length;\n}\n\nlet hashtags = [];\ntry { hashtags = JSON.parse(body.hashtags || '[]'); } catch { hashtags = String(body.hashtagsText || '').split(/[\\s,]+/).filter(Boolean); }\nhashtags = hashtags.map(h => String(h).trim()).filter(Boolean).map(h => (h.startsWith('#') ? h : '#' + h));\nif (!hashtags.some(h => h.toLowerCase() === '#shorts')) hashtags.push('#Shorts');\n\nconst title = String(body.title || 'Nuevo video').trim();\nconst description = String(body.description || '').trim();\nconst cut = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);\n\nconst ytTitle = cut(title.includes('#Shorts') ? title : `${title} #Shorts`, 100);\nconst ytDescription = cut(`${description}\\n\\n${hashtags.join(' ')}`.trim(), 4900);\nconst caption = cut(`${title}\\n\\n${description}\\n\\n${hashtags.slice(0, 30).join(' ')}`.trim(), 2200);\n\nconst scheduledAt = String(body.scheduledAt || '').trim();\nconst scheduledMs = scheduledAt ? Date.parse(scheduledAt) : NaN;\nconst isScheduled = Number.isFinite(scheduledMs) && scheduledMs > Date.now() + 60000;\nconst isTest = event === 'reel.publish.test';\nconst dryRun = CONFIG.DRY_RUN || isTest;\n\nreturn [{\n  json: {\n    authorized,\n    event,\n    isDelete: event === 'reel.delete',\n    isTest,\n    reelId: body.reelId || '',\n    title, ytTitle, ytDescription, caption,\n    tags: hashtags.map(h => h.replace(/^#/, '')).join(','),\n    privacyStatus: ['public', 'unlisted', 'private'].includes(body.privacyStatus) ? body.privacyStatus : 'public',\n    scheduledAt: isScheduled ? new Date(scheduledMs).toISOString() : '',\n    isScheduled,\n    youtubeVideoId: String(body.youtubeVideoId || '').trim(),\n    videoBytes,\n    hasVideo: Boolean(videoKey),\n    publishYoutube: CONFIG.YOUTUBE && !dryRun && Boolean(videoKey),\n    publishInstagram: CONFIG.INSTAGRAM && CONFIG.INSTAGRAM_REELS !== false && !dryRun && Boolean(videoKey),\n    publishTiktok: CONFIG.TIKTOK && !dryRun && Boolean(videoKey),\n    publishInstagramStory: CONFIG.INSTAGRAM && CONFIG.INSTAGRAM_STORIES && !dryRun && Boolean(videoKey),\n    publishFacebook: CONFIG.FACEBOOK && !dryRun && Boolean(videoKey),\n    cfg: {\n      dryRun,\n      youtubeCategoryId: CONFIG.YOUTUBE_CATEGORY_ID,\n      youtubeRegion: CONFIG.YOUTUBE_REGION,\n      instagramUserId: CONFIG.INSTAGRAM_USER_ID,\n      instagramToken: CONFIG.INSTAGRAM_TOKEN,\n      graphVersion: CONFIG.GRAPH_VERSION,\n      facebookPageId: CONFIG.FACEBOOK_PAGE_ID,\n      tiktokClientKey: CONFIG.TIKTOK_CLIENT_KEY,\n      tiktokClientSecret: CONFIG.TIKTOK_CLIENT_SECRET,\n      tiktokRefreshToken: CONFIG.TIKTOK_REFRESH_TOKEN,\n      tiktokMode: CONFIG.TIKTOK_MODE,\n      tiktokPrivacy: CONFIG.TIKTOK_PRIVACY,\n      telegramToken: CONFIG.TELEGRAM_BOT_TOKEN,\n      telegramChatId: CONFIG.TELEGRAM_CHAT_ID,\n    },\n  },\n  binary,\n}];"
+        "jsCode": "// =====================================================================\n// ⚙️ CONFIGURACIÓN — edita SOLO este bloque\n// =====================================================================\nconst CONFIG = {\n  // Mismo valor que \"Secreto del Webhook\" en la app (Redes Sociales). Vacío = no se valida.\n  WEBHOOK_SECRET: '',\n  // true = no publica nada: solo registra lo que haría (para probar el flujo)\n  DRY_RUN: false,\n\n  // Redes activas\n  YOUTUBE: true,\n  INSTAGRAM: true,\n  TIKTOK: true,\n\n  // YouTube (la cuenta se elige en la credencial del nodo \"YouTube: subir Short\")\n  YOUTUBE_CATEGORY_ID: '25',   // 25 = Noticias y política\n  YOUTUBE_REGION: 'EC',\n\n  // Instagram (API de Instagram con inicio de sesión de Facebook; cuenta profesional vinculada a una página)\n  INSTAGRAM_USER_ID: '',       // ID de la cuenta de Instagram (empieza con 1784...)\n  INSTAGRAM_TOKEN: '',         // token con permisos instagram_basic + instagram_content_publish\n  GRAPH_VERSION: 'v26.0',\n  INSTAGRAM_REELS: true,       // publica el video como Reel\n  INSTAGRAM_STORIES: true,     // además, publica el video como historia\n\n  // Página de Facebook (Reels). Usa el mismo INSTAGRAM_TOKEN: debe incluir pages_manage_posts\n  FACEBOOK: false,\n  FACEBOOK_PAGE_ID: '1500702656452606',   // página Radar 593\n\n  // TikTok (Content Posting API)\n  TIKTOK_CLIENT_KEY: '',\n  TIKTOK_CLIENT_SECRET: '',\n  TIKTOK_REFRESH_TOKEN: '',    // solo la primera vez: después se renueva y guarda solo\n  TIKTOK_MODE: 'inbox',        // 'inbox' = llega a tus borradores de TikTok (no requiere app auditada)\n                               // 'direct' = publica directo (requiere scope video.publish)\n  TIKTOK_PRIVACY: 'SELF_ONLY', // en 'direct': apps sin auditar solo pueden SELF_ONLY\n\n  // App Viral Shorts: n8n le avisa cada publicación y le envía las métricas para que aprenda\n  APP_URL: 'http://localhost:3000',\n  METRICS: true,               // recolecta vistas/likes cada 6 horas (YouTube, Instagram, Facebook)\n\n  // Telegram: te envía el texto de cada video para pegarlo en TikTok\n  TELEGRAM_BOT_TOKEN: '',      // ← PEGA AQUÍ el token que te dio @BotFather\n  TELEGRAM_CHAT_ID: '',        // vacío = se detecta solo cuando pulsas \"Iniciar\" en tu bot\n};\n// =====================================================================\n\nconst item = $input.first();\nconst headers = item.json.headers || {};\nconst body = item.json.body || {};\n// Ejecución interna (programador de métricas): no viene del webhook\nconst isInternal = !item.json.headers && !item.json.body;\nconst event = isInternal ? 'metrics.collect' : String(body.event || 'reel.publish');\nconst authorized = isInternal ? CONFIG.METRICS !== false : !CONFIG.WEBHOOK_SECRET || headers['x-webhook-secret'] === CONFIG.WEBHOOK_SECRET;\n\n// Video binario (la app lo envía en el campo \"data\")\nconst keys = Object.keys(item.binary || {});\nconst videoKey = keys.includes('data') ? 'data' : keys[0];\nconst binary = {};\nlet videoBytes = 0;\nif (videoKey) {\n  binary.video = item.binary[videoKey];\n  const buf = await this.helpers.getBinaryDataBuffer(0, videoKey);\n  videoBytes = buf.length;\n}\n\nlet hashtags = [];\ntry { hashtags = JSON.parse(body.hashtags || '[]'); } catch { hashtags = String(body.hashtagsText || '').split(/[\\s,]+/).filter(Boolean); }\nhashtags = hashtags.map(h => String(h).trim()).filter(Boolean).map(h => (h.startsWith('#') ? h : '#' + h));\nif (!hashtags.some(h => h.toLowerCase() === '#shorts')) hashtags.push('#Shorts');\n\nconst title = String(body.title || 'Nuevo video').trim();\nconst description = String(body.description || '').trim();\nconst cut = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);\n\nconst ytTitle = cut(title.includes('#Shorts') ? title : `${title} #Shorts`, 100);\nconst ytDescription = cut(`${description}\\n\\n${hashtags.join(' ')}`.trim(), 4900);\nconst caption = cut(`${title}\\n\\n${description}\\n\\n${hashtags.slice(0, 30).join(' ')}`.trim(), 2200);\n\nconst scheduledAt = String(body.scheduledAt || '').trim();\nconst scheduledMs = scheduledAt ? Date.parse(scheduledAt) : NaN;\nconst isScheduled = Number.isFinite(scheduledMs) && scheduledMs > Date.now() + 60000;\nconst isTest = event === 'reel.publish.test';\nconst dryRun = CONFIG.DRY_RUN || isTest;\n\nreturn [{\n  json: {\n    authorized,\n    event,\n    isDelete: event === 'reel.delete',\n    isTest,\n    reelId: body.reelId || '',\n    scriptId: body.scriptId || '',\n    isMetrics: event === 'metrics.collect',\n    title, ytTitle, ytDescription, caption,\n    tags: hashtags.map(h => h.replace(/^#/, '')).join(','),\n    privacyStatus: ['public', 'unlisted', 'private'].includes(body.privacyStatus) ? body.privacyStatus : 'public',\n    scheduledAt: isScheduled ? new Date(scheduledMs).toISOString() : '',\n    isScheduled,\n    youtubeVideoId: String(body.youtubeVideoId || '').trim(),\n    videoBytes,\n    hasVideo: Boolean(videoKey),\n    publishYoutube: CONFIG.YOUTUBE && !dryRun && Boolean(videoKey),\n    publishInstagram: CONFIG.INSTAGRAM && CONFIG.INSTAGRAM_REELS !== false && !dryRun && Boolean(videoKey),\n    publishTiktok: CONFIG.TIKTOK && !dryRun && Boolean(videoKey),\n    publishInstagramStory: CONFIG.INSTAGRAM && CONFIG.INSTAGRAM_STORIES && !dryRun && Boolean(videoKey),\n    publishFacebook: CONFIG.FACEBOOK && !dryRun && Boolean(videoKey),\n    cfg: {\n      dryRun,\n      appUrl: CONFIG.APP_URL,\n      appSecret: CONFIG.WEBHOOK_SECRET,\n      youtubeCategoryId: CONFIG.YOUTUBE_CATEGORY_ID,\n      youtubeRegion: CONFIG.YOUTUBE_REGION,\n      instagramUserId: CONFIG.INSTAGRAM_USER_ID,\n      instagramToken: CONFIG.INSTAGRAM_TOKEN,\n      graphVersion: CONFIG.GRAPH_VERSION,\n      facebookPageId: CONFIG.FACEBOOK_PAGE_ID,\n      tiktokClientKey: CONFIG.TIKTOK_CLIENT_KEY,\n      tiktokClientSecret: CONFIG.TIKTOK_CLIENT_SECRET,\n      tiktokRefreshToken: CONFIG.TIKTOK_REFRESH_TOKEN,\n      tiktokMode: CONFIG.TIKTOK_MODE,\n      tiktokPrivacy: CONFIG.TIKTOK_PRIVACY,\n      telegramToken: CONFIG.TELEGRAM_BOT_TOKEN,\n      telegramChatId: CONFIG.TELEGRAM_CHAT_ID,\n    },\n  },\n  binary,\n}];"
       },
       "id": "ca474b5d-c1d7-45fb-948f-e6885f8405e8",
       "name": "Validar y preparar",
@@ -302,7 +302,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const up = $('YouTube: subir Short').first().json;\nconst r = $input.first().json;\nconst id = r.id || up.uploadId || up.id;\nreturn [{ json: { platform: 'youtube', ok: true, videoId: id, url: id ? `https://youtube.com/shorts/${id}` : '', madeForKids: r.status?.selfDeclaredMadeForKids ?? false, privacy: r.status?.privacyStatus } }];"
+        "jsCode": "const up = $('YouTube: subir Short').first().json;\nconst r = $input.first().json;\nconst id = r.id || up.uploadId || up.id;\nconst __out = { platform: 'youtube', ok: true, videoId: id, url: id ? `https://youtube.com/shorts/${id}` : '', madeForKids: r.status?.selfDeclaredMadeForKids ?? false, privacy: r.status?.privacyStatus };\n// Avisar a la app para medir el rendimiento y aprender. Nunca bloquea la publicación.\nconst __p = $('Validar y preparar').first().json;\nfor (const __url of [__p.cfg.appUrl, 'http://host.docker.internal:3000'].filter(Boolean)) {\n  try {\n    await this.helpers.httpRequest({ method: 'POST', url: `${__url}/api/n8n/publication-result`, headers: { 'X-Webhook-Secret': __p.cfg.appSecret || '' },\n      body: { reelId: __p.reelId, scriptId: __p.scriptId, title: __p.title, platform: __out.platform, externalId: __out.videoId || __out.mediaId, url: __out.url }, json: true, timeout: 15000 });\n    __out.appNotified = true; break;\n  } catch (e) { __out.appNotified = false; __out.appError = String(e.message || e).slice(0, 200); }\n}\nreturn [{ json: __out }];"
       },
       "id": "b900ec23-4c4c-4ed8-8f54-4cae276b2643",
       "name": "YouTube: resultado",
@@ -432,7 +432,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Llamada HTTP que, si falla, muestra la respuesta de la red (motivo real del error)\nconst call = async (opts) => {\n  const r = await this.helpers.httpRequest({ ...opts, returnFullResponse: true, ignoreHttpStatusErrors: true });\n  let body = r.body;\n  if (typeof body === 'string') { try { body = JSON.parse(body); } catch {} }\n  if (r.statusCode >= 400) throw new Error(`HTTP ${r.statusCode} en ${opts.url}: ` + (typeof body === 'string' ? body : JSON.stringify(body)).slice(0, 600));\n  return body;\n};\n\n// Espera a que Instagram procese el video y lo publica.\nconst prev = $('Instagram: crear contenedor').first().json;\nconst c = prev.cfg;\nconst base = `https://graph.facebook.com/${c.graphVersion}`;\nconst sleep = ms => new Promise(r => setTimeout(r, ms));\n\nlet status = '';\nfor (let i = 0; i < 24; i++) {\n  const st = await call({\n    method: 'GET', url: `${base}/${prev.igContainerId}`,\n    qs: { fields: 'status_code,status', access_token: c.instagramToken }, json: true,\n  });\n  status = st.status_code;\n  if (status === 'FINISHED') break;\n  if (status === 'ERROR' || status === 'EXPIRED') throw new Error('Instagram rechazó el video: ' + JSON.stringify(st));\n  await sleep(10000);\n}\nif (status !== 'FINISHED') throw new Error('Instagram sigue procesando el video tras 4 min (contenedor ' + prev.igContainerId + ')');\n\nconst pub = await call({\n  method: 'POST', url: `${base}/${c.instagramUserId}/media_publish`,\n  qs: { creation_id: prev.igContainerId, access_token: c.instagramToken }, json: true,\n});\nlet permalink = '';\ntry {\n  const m = await call({ method: 'GET', url: `${base}/${pub.id}`, qs: { fields: 'permalink', access_token: c.instagramToken }, json: true });\n  permalink = m.permalink || '';\n} catch {}\nreturn [{ json: { platform: 'instagram', ok: true, mediaId: pub.id, url: permalink } }];"
+        "jsCode": "// Llamada HTTP que, si falla, muestra la respuesta de la red (motivo real del error)\nconst call = async (opts) => {\n  const r = await this.helpers.httpRequest({ ...opts, returnFullResponse: true, ignoreHttpStatusErrors: true });\n  let body = r.body;\n  if (typeof body === 'string') { try { body = JSON.parse(body); } catch {} }\n  if (r.statusCode >= 400) throw new Error(`HTTP ${r.statusCode} en ${opts.url}: ` + (typeof body === 'string' ? body : JSON.stringify(body)).slice(0, 600));\n  return body;\n};\n\n// Espera a que Instagram procese el video y lo publica.\nconst prev = $('Instagram: crear contenedor').first().json;\nconst c = prev.cfg;\nconst base = `https://graph.facebook.com/${c.graphVersion}`;\nconst sleep = ms => new Promise(r => setTimeout(r, ms));\n\nlet status = '';\nfor (let i = 0; i < 24; i++) {\n  const st = await call({\n    method: 'GET', url: `${base}/${prev.igContainerId}`,\n    qs: { fields: 'status_code,status', access_token: c.instagramToken }, json: true,\n  });\n  status = st.status_code;\n  if (status === 'FINISHED') break;\n  if (status === 'ERROR' || status === 'EXPIRED') throw new Error('Instagram rechazó el video: ' + JSON.stringify(st));\n  await sleep(10000);\n}\nif (status !== 'FINISHED') throw new Error('Instagram sigue procesando el video tras 4 min (contenedor ' + prev.igContainerId + ')');\n\nconst pub = await call({\n  method: 'POST', url: `${base}/${c.instagramUserId}/media_publish`,\n  qs: { creation_id: prev.igContainerId, access_token: c.instagramToken }, json: true,\n});\nlet permalink = '';\ntry {\n  const m = await call({ method: 'GET', url: `${base}/${pub.id}`, qs: { fields: 'permalink', access_token: c.instagramToken }, json: true });\n  permalink = m.permalink || '';\n} catch {}\nconst __out = { platform: 'instagram', ok: true, mediaId: pub.id, url: permalink };\n// Avisar a la app para medir el rendimiento y aprender. Nunca bloquea la publicación.\nconst __p = $('Validar y preparar').first().json;\nfor (const __url of [__p.cfg.appUrl, 'http://host.docker.internal:3000'].filter(Boolean)) {\n  try {\n    await this.helpers.httpRequest({ method: 'POST', url: `${__url}/api/n8n/publication-result`, headers: { 'X-Webhook-Secret': __p.cfg.appSecret || '' },\n      body: { reelId: __p.reelId, scriptId: __p.scriptId, title: __p.title, platform: __out.platform, externalId: __out.videoId || __out.mediaId, url: __out.url }, json: true, timeout: 15000 });\n    __out.appNotified = true; break;\n  } catch (e) { __out.appNotified = false; __out.appError = String(e.message || e).slice(0, 200); }\n}\nreturn [{ json: __out }];"
       },
       "id": "624b7f33-15c2-4d4c-be4a-2e1b4967878d",
       "name": "Instagram: publicar",
@@ -856,7 +856,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Llamada HTTP que, si falla, muestra la respuesta de la red (motivo real del error)\nconst call = async (opts) => {\n  const r = await this.helpers.httpRequest({ ...opts, returnFullResponse: true, ignoreHttpStatusErrors: true });\n  let body = r.body;\n  if (typeof body === 'string') { try { body = JSON.parse(body); } catch {} }\n  if (r.statusCode >= 400) throw new Error(`HTTP ${r.statusCode} en ${opts.url}: ` + (typeof body === 'string' ? body : JSON.stringify(body)).slice(0, 600));\n  return body;\n};\nconst sleep = ms => new Promise(r => setTimeout(r, ms));\n\n// Publica el Reel en la página y espera a que Facebook lo procese.\nconst prev = $('Facebook: iniciar subida').first().json;\nconst c = prev.cfg;\nconst base = `https://graph.facebook.com/${c.graphVersion}`;\nawait call({ method: 'POST', url: `${base}/${c.facebookPageId}/video_reels`, qs: {\n  upload_phase: 'finish', video_id: prev.fbVideoId, video_state: 'PUBLISHED',\n  description: prev.caption, title: prev.title.slice(0, 255), access_token: c.instagramToken,\n}, json: true });\nlet st = {};\nfor (let i = 0; i < 18; i++) {\n  await sleep(10000);\n  st = await call({ method: 'GET', url: `${base}/${prev.fbVideoId}`, qs: { fields: 'status,permalink_url', access_token: c.instagramToken }, json: true });\n  const v = st.status?.video_status;\n  if (v === 'ready' || st.status?.publishing_phase?.status === 'complete') break;\n  if (v === 'error') throw new Error('Facebook rechazó el video: ' + JSON.stringify(st.status));\n}\nconst url = st.permalink_url ? (st.permalink_url.startsWith('http') ? st.permalink_url : 'https://www.facebook.com' + st.permalink_url) : `https://www.facebook.com/reel/${prev.fbVideoId}`;\nreturn [{ json: { platform: 'facebook', ok: true, videoId: prev.fbVideoId, url, status: st.status?.video_status || 'procesando' } }];"
+        "jsCode": "// Llamada HTTP que, si falla, muestra la respuesta de la red (motivo real del error)\nconst call = async (opts) => {\n  const r = await this.helpers.httpRequest({ ...opts, returnFullResponse: true, ignoreHttpStatusErrors: true });\n  let body = r.body;\n  if (typeof body === 'string') { try { body = JSON.parse(body); } catch {} }\n  if (r.statusCode >= 400) throw new Error(`HTTP ${r.statusCode} en ${opts.url}: ` + (typeof body === 'string' ? body : JSON.stringify(body)).slice(0, 600));\n  return body;\n};\nconst sleep = ms => new Promise(r => setTimeout(r, ms));\n\n// Publica el Reel en la página y espera a que Facebook lo procese.\nconst prev = $('Facebook: iniciar subida').first().json;\nconst c = prev.cfg;\nconst base = `https://graph.facebook.com/${c.graphVersion}`;\nawait call({ method: 'POST', url: `${base}/${c.facebookPageId}/video_reels`, qs: {\n  upload_phase: 'finish', video_id: prev.fbVideoId, video_state: 'PUBLISHED',\n  description: prev.caption, title: prev.title.slice(0, 255), access_token: c.instagramToken,\n}, json: true });\nlet st = {};\nfor (let i = 0; i < 18; i++) {\n  await sleep(10000);\n  st = await call({ method: 'GET', url: `${base}/${prev.fbVideoId}`, qs: { fields: 'status,permalink_url', access_token: c.instagramToken }, json: true });\n  const v = st.status?.video_status;\n  if (v === 'ready' || st.status?.publishing_phase?.status === 'complete') break;\n  if (v === 'error') throw new Error('Facebook rechazó el video: ' + JSON.stringify(st.status));\n}\nconst url = st.permalink_url ? (st.permalink_url.startsWith('http') ? st.permalink_url : 'https://www.facebook.com' + st.permalink_url) : `https://www.facebook.com/reel/${prev.fbVideoId}`;\nconst __out = { platform: 'facebook', ok: true, videoId: prev.fbVideoId, url, status: st.status?.video_status || 'procesando' };\n// Avisar a la app para medir el rendimiento y aprender. Nunca bloquea la publicación.\nconst __p = $('Validar y preparar').first().json;\nfor (const __url of [__p.cfg.appUrl, 'http://host.docker.internal:3000'].filter(Boolean)) {\n  try {\n    await this.helpers.httpRequest({ method: 'POST', url: `${__url}/api/n8n/publication-result`, headers: { 'X-Webhook-Secret': __p.cfg.appSecret || '' },\n      body: { reelId: __p.reelId, scriptId: __p.scriptId, title: __p.title, platform: __out.platform, externalId: __out.videoId || __out.mediaId, url: __out.url }, json: true, timeout: 15000 });\n    __out.appNotified = true; break;\n  } catch (e) { __out.appNotified = false; __out.appError = String(e.message || e).slice(0, 200); }\n}\nreturn [{ json: __out }];"
       },
       "id": "8a9447b4-8d4f-41ed-b903-5f66ef38ce4d",
       "name": "Facebook: publicar",
@@ -880,6 +880,124 @@
         2640,
         1700
       ]
+    },
+    {
+      "id": "1330ee9e-6be7-495f-b877-25b1057903a7",
+      "name": "Cada 6 horas: métricas",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        -96
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "559cb384-4364-4573-bce2-bd204268197f",
+      "name": "¿Recolectar métricas?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        336,
+        -96
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "a8e67191-c169-42fa-9c5a-3f924bc79065",
+              "leftValue": "={{ $json.isMetrics === true && $json.authorized === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b8e3bb0a-01f9-47eb-80a5-473ffebba37b",
+      "name": "YouTube: mi canal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        560,
+        -320
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "youTubeOAuth2Api",
+        "url": "https://www.googleapis.com/youtube/v3/channels?part=contentDetails&mine=true",
+        "options": {}
+      }
+    },
+    {
+      "id": "2a6fafe9-8dfa-474d-9065-0895c85d1991",
+      "name": "YouTube: últimos videos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        784,
+        -320
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "youTubeOAuth2Api",
+        "url": "=https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=50&playlistId={{ $json.items?.[0]?.contentDetails?.relatedPlaylists?.uploads || 'none' }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "38e71c34-e62a-4347-b01d-d6d7e404739c",
+      "name": "YouTube: estadísticas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1008,
+        -320
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "youTubeOAuth2Api",
+        "url": "=https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&id={{ ($json.items || []).map(i => i.contentDetails.videoId).join(',') || 'none' }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "122f6422-1fca-43ed-974d-096d8d0839da",
+      "name": "Métricas: Instagram, Facebook y enviar a la app",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1232,
+        -320
+      ],
+      "parameters": {
+        "jsCode": "// Junta vistas, likes y comentarios de YouTube, Instagram y Facebook y los envía a la app,\n// que los usa para aprender qué temas, ganchos y títulos funcionan.\nconst p = $('Validar y preparar').first().json;\nconst c = p.cfg;\nconst base = `https://graph.facebook.com/${c.graphVersion}`;\nconst get = async (url, qs) => {\n  const r = await this.helpers.httpRequest({ method: 'GET', url, qs: { ...qs, access_token: c.instagramToken }, json: true, returnFullResponse: true, ignoreHttpStatusErrors: true, timeout: 20000 });\n  if (r.statusCode >= 400) throw new Error('HTTP ' + r.statusCode + ': ' + JSON.stringify(r.body).slice(0, 300));\n  return r.body;\n};\nconst items = [], errors = [];\n\n// YouTube (viene de los nodos anteriores)\nconst yt = $input.first().json;\nif (yt.error) errors.push('YouTube: ' + JSON.stringify(yt.error).slice(0, 300));\nfor (const v of yt.items || []) {\n  const s = v.statistics || {};\n  items.push({ platform: 'youtube', externalId: v.id, url: 'https://youtube.com/shorts/' + v.id, title: v.snippet?.title, publishedAt: v.snippet?.publishedAt,\n    views: Number(s.viewCount || 0), likes: s.likeCount != null ? Number(s.likeCount) : null, comments: s.commentCount != null ? Number(s.commentCount) : null });\n}\n\n// Instagram (Reels)\nif (c.instagramUserId && c.instagramToken) {\n  try {\n    const media = await get(base + '/' + c.instagramUserId + '/media', { fields: 'id,caption,permalink,timestamp,media_type,media_product_type,like_count,comments_count', limit: 50 });\n    for (const m of media.data || []) {\n      if (m.media_type !== 'VIDEO') continue;\n      const it = { platform: 'instagram', externalId: m.id, url: m.permalink, title: (m.caption || '').split('\\n')[0], publishedAt: m.timestamp,\n        likes: m.like_count ?? null, comments: m.comments_count ?? null, extra: { product: m.media_product_type } };\n      try {\n        const ins = await get(base + '/' + m.id + '/insights', { metric: 'views,reach,saved,shares' });\n        for (const d of ins.data || []) {\n          const val = d.values?.[0]?.value ?? d.total_value?.value;\n          if (d.name === 'views') it.views = val; else if (d.name === 'saved') it.saves = val;\n          else if (d.name === 'shares') it.shares = val; else if (d.name === 'reach') it.extra.reach = val;\n        }\n      } catch (e) { it.extra.insightsError = String(e.message).slice(0, 200); }\n      items.push(it);\n    }\n  } catch (e) { errors.push('Instagram: ' + e.message); }\n}\n\n// Facebook (Reels de la página)\nif (c.facebookPageId && c.instagramToken) {\n  try {\n    const reels = await get(base + '/' + c.facebookPageId + '/video_reels', { fields: 'id,description,permalink_url,created_time', limit: 50 });\n    for (const r of reels.data || []) {\n      const link = r.permalink_url ? (r.permalink_url.startsWith('http') ? r.permalink_url : 'https://www.facebook.com' + r.permalink_url) : 'https://www.facebook.com/reel/' + r.id;\n      const it = { platform: 'facebook', externalId: r.id, url: link, title: (r.description || '').split('\\n')[0], publishedAt: r.created_time, extra: {} };\n      try {\n        // Cada métrica por separado: si una no existe en esta versión de la API, las demás igual llegan\n        const bad = [];\n        for (const metric of ['blue_reels_play_count', 'fb_reels_total_plays', 'post_impressions_unique', 'post_video_likes_by_reaction_type', 'post_video_social_actions']) {\n          try {\n            const ins = await get(base + '/' + r.id + '/video_insights', { metric });\n            for (const d of ins.data || []) {\n              const val = d.values?.[0]?.value;\n              if (d.name === 'blue_reels_play_count' || d.name === 'fb_reels_total_plays') it.views = Math.max(it.views || 0, Number(val) || 0);\n              else if (d.name === 'post_impressions_unique') it.extra.reach = val;\n              else if (d.name === 'post_video_likes_by_reaction_type') it.likes = Object.values(val || {}).reduce((a, b) => a + (Number(b) || 0), 0);\n              else if (d.name === 'post_video_social_actions') { it.comments = val?.COMMENT ?? null; it.shares = val?.SHARE ?? null; }\n            }\n          } catch (e) { bad.push(metric + ': ' + String(e.message).slice(0, 120)); }\n        }\n        if (bad.length) it.extra.insightsSkipped = bad;\n        if (it.views == null && bad.length) throw new Error(bad[0]);\n      } catch (e) { it.extra.insightsError = String(e.message).slice(0, 200); }\n      items.push(it);\n    }\n  } catch (e) { errors.push('Facebook: ' + e.message); }\n}\n\n// Enviar a la app\nlet app = null;\nif (items.length) {\n  for (const url of [c.appUrl, 'http://host.docker.internal:3000'].filter(Boolean)) {\n    try {\n      app = await this.helpers.httpRequest({ method: 'POST', url: url + '/api/n8n/metrics', headers: { 'X-Webhook-Secret': c.appSecret || '' }, body: { items }, json: true, timeout: 30000 });\n      break;\n    } catch (e) { errors.push('App (' + url + '): ' + String(e.message).slice(0, 200)); }\n  }\n}\n// Errores de estadísticas por red (uno de cada tipo) para diagnosticar permisos\nfor (const i of items) if (i.extra?.insightsError) { const m = i.platform + ' insights: ' + i.extra.insightsError.replace(/,?\\\\?\"fbtrace_id.*$/, ''); if (!errors.includes(m)) errors.push(m); }\nconst byPlatform = items.reduce((a, i) => (a[i.platform] = (a[i.platform] || 0) + 1, a), {});\nreturn [{ json: { collected: items.length, byPlatform, app, errors } }];"
+      }
     }
   ],
   "connections": {
@@ -898,7 +1016,7 @@
       "main": [
         [
           {
-            "node": "¿Autorizado?",
+            "node": "¿Recolectar métricas?",
             "type": "main",
             "index": 0
           }
@@ -1355,6 +1473,68 @@
         [
           {
             "node": "Facebook: registrar fallo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Recolectar métricas?": {
+      "main": [
+        [
+          {
+            "node": "YouTube: mi canal",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "¿Autorizado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cada 6 horas: métricas": {
+      "main": [
+        [
+          {
+            "node": "Validar y preparar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube: mi canal": {
+      "main": [
+        [
+          {
+            "node": "YouTube: últimos videos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube: últimos videos": {
+      "main": [
+        [
+          {
+            "node": "YouTube: estadísticas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube: estadísticas": {
+      "main": [
+        [
+          {
+            "node": "Métricas: Instagram, Facebook y enviar a la app",
             "type": "main",
             "index": 0
           }

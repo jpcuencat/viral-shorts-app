@@ -2,19 +2,26 @@
  * Búsquedas reales que la gente escribe en YouTube y Google (autocompletado público, gratuito).
  * Sirven para que el título y los hashtags de cada Short usen los términos que de verdad se buscan.
  */
-const CLICKBAIT = /\b(shock|alerta|escándalo|escandalo|urgente|última hora|ultima hora|increíble|increible|impactante|lo que no|nadie te)\b/gi
+const CLICKBAIT = /\b(shock|alerta|escándalo|escandalo|urgente|última hora|ultima hora|increíble|increible|impactante|lo que no|nadie te|lo que la tv|no mostró|no mostro|filtrado)\b/gi
 
 /** Convierte un título viral en una semilla de búsqueda limpia (sin emojis, signos ni clickbait). */
 export function toSearchSeed(text: string, maxWords = 5): string {
-    return (text || '')
+    // "¡LO QUE LA TV NO MOSTRÓ! El túnel del Maracaná..." → la parte con el tema es la que va tras el gancho
+    let t = text || ''
+    const parts = t.split(/[!|]\s+/).map(x => x.trim()).filter(x => x.split(/\s+/).length >= 3)
+    if (parts.length > 1) t = parts[parts.length - 1]
+    return t
         .replace(/[\p{Extended_Pictographic}\u{FE0F}]/gu, ' ')
         .replace(/[¡!¿?"“”«»:;|#()[\]{}]/g, ' ')
         .replace(CLICKBAIT, ' ')
         .replace(/\s+/g, ' ')
         .trim()
         .split(' ')
+        .filter((w, i) => !(i === 0 && /^(el|la|los|las|un|una|este|esta)$/i.test(w)))
         .slice(0, maxWords)
         .join(' ')
+        .replace(/\s+(de|del|la|el|los|las|un|una|que|en|y|fue|es|a|con|por|para|lo)$/i, '')
+        .replace(/\s+(de|del|la|el|los|las|un|una|que|en|y|fue|es|a|con|por|para|lo)$/i, '')
 }
 
 async function suggest(query: string, opts: { yt: boolean; hl: string; gl?: string }): Promise<string[]> {

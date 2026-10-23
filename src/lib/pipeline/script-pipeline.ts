@@ -96,7 +96,7 @@ export async function generateScriptForIdea(
         const ownerId = expectedUserId || idea.user_id
         const [search, lessons] = await Promise.all([
             getSearchSuggestions(
-                [idea.ai_metadata?.matched_trend, idea.title, facts.location].filter(Boolean) as string[],
+                [idea.ai_metadata?.matched_trend, idea.title].filter(Boolean) as string[],
                 { gl: countryFromLocation(facts.location) }
             ).catch(() => ({ seeds: [], youtube: [], google: [] })),
             insightsPromptBlock(supabase, ownerId, 'script'),
