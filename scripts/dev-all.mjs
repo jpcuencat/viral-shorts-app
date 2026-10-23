@@ -2,11 +2,10 @@
 // Uso: npm run dev:all   (Ctrl+C detiene ambos)
 import { spawn } from 'child_process'
 
-const isWin = process.platform === 'win32'
-const npm = isWin ? 'npm.cmd' : 'npm'
+// Comando completo como una sola cadena (sin lista de argumentos) para evitar el aviso DEP0190 en Windows
 const procs = [
-    spawn(npm, ['run', 'dev'], { stdio: 'inherit', shell: isWin, env: { ...process.env, EMBEDDED_WORKER: 'false' } }),
-    spawn(npm, ['run', 'worker'], { stdio: 'inherit', shell: isWin, env: { ...process.env } }),
+    spawn('npm run dev', { stdio: 'inherit', shell: true, env: { ...process.env, EMBEDDED_WORKER: 'false' } }),
+    spawn('npm run worker', { stdio: 'inherit', shell: true, env: { ...process.env } }),
 ]
 const stop = () => { for (const p of procs) { try { p.kill() } catch { /* ya terminó */ } } process.exit(0) }
 process.on('SIGINT', stop)

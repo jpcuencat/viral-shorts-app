@@ -3,8 +3,8 @@
  * `npm run worker` lo ejecuta con `tsx watch`: se reinicia solo al cambiar el código del pipeline,
  * sin reiniciar Next. Se usa junto con `next dev` y EMBEDDED_WORKER=false (ver `npm run dev:all`).
  */
-import nextEnv from '@next/env'
-nextEnv.loadEnvConfig(process.cwd(), true)
+import { loadEnvConfig } from '@next/env'
+loadEnvConfig(process.cwd(), true)
 
 async function main() {
     const { installFileLog } = await import('./lib/logging/file-log')
