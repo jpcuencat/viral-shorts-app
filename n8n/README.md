@@ -30,4 +30,5 @@ n8n → **Workflows → ⋯ → Import from File** → elige el JSON.
 ## Notas
 - n8n debe estar encendido para publicar y para las publicaciones programadas (espera hasta la hora indicada).
 - `DRY_RUN: true` en `CONFIG` permite probar todo el flujo sin publicar.
+- `FACEBOOK_STORIES: true` publica además el video como historia de la página de Facebook (mismos permisos que los Reels).
 - Cada red es independiente: si una falla, las otras siguen. El detalle queda en n8n → Executions.
