@@ -78,3 +78,6 @@ _to_delete/
 
 # Registro local del servidor
 logs/
+
+# Muestras del diagnóstico de Hugging Face
+public/hf-test/

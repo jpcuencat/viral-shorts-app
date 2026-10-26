@@ -10,6 +10,7 @@ import { generateJson } from '@/lib/ai/gemini'
 import { ClipRelevanceSchema } from '@/lib/ai/schemas'
 import { FFMPEG_PATH, FFPROBE_PATH, YTDLP_PATH, BROADCAST_SAFE_CROP } from '@/lib/media-config'
 import { vaultStore, type VaultEntry } from '@/lib/vault-store'
+import { generateHfImage } from '@/services/hf-image'
 
 const execFileAsync = promisify(execFile)
 const ffmpegPath = FFMPEG_PATH
@@ -695,36 +696,15 @@ Respond ONLY with JSON: {"valid": bool, "has_overlay_text": bool, "has_logo_or_w
             : baseNegative
 
         let imageBuffer: Buffer | null = null
-        let providerLabel = 'HuggingFace SD3'
+        let providerLabel = 'Flux AI'
 
-        const hfKey = process.env.HF_TOKEN || process.env.HUGGINGFACE_API_KEY || process.env.NEXT_PUBLIC_HUGGINGFACE_API_KEY
-        if (hfKey) {
-            try {
-                const response = await axios({
-                    url: 'https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-3-medium-diffusers',
-                    method: 'POST',
-                    headers: {
-                        Authorization: `Bearer ${hfKey}`,
-                        'Content-Type': 'application/json',
-                        Accept: 'image/jpeg'
-                    },
-                    data: {
-                        inputs: effectivePrompt,
-                        parameters: {
-                            negative_prompt: negativePrompt,
-                            width: 768,
-                            height: 1344,
-                            num_inference_steps: 26,
-                            guidance_scale: 7.0
-                        }
-                    },
-                    responseType: 'arraybuffer',
-                    timeout: 45000
-                })
-                imageBuffer = Buffer.from(response.data)
-            } catch (hfErr: any) {
-                console.warn(`[ImageService] Hugging Face SD3 error (${hfErr.message}), trying Pollinations Flux...`)
-            }
+        // Hugging Face: mejores modelos actuales con respaldo entre proveedores (ver hf-image.ts)
+        const hf = await generateHfImage(realPerson ? `${effectivePrompt}, no people, no faces` : effectivePrompt, negativePrompt)
+        if (hf) {
+            imageBuffer = hf.buffer
+            providerLabel = hf.label
+        } else {
+            console.warn('[ImageService] Hugging Face no generó la imagen, se usa Pollinations Flux')
         }
 
         if (!imageBuffer) {

@@ -427,7 +427,7 @@ Respond ONLY with JSON: {"topic_type": "...", "location_label": "...", "scenes":
                 const duration = await videoService.getAudioDuration(audioPath)
                 const subtitlePath = await subtitleService.generateSRT(scene.text, duration, wordCues)
 
-                // B. SMART AI & VIDEO VAULT: Supports 'hybrid', 'real_video' (YouTube B-Roll / Custom Video), and 'ai_images' (HuggingFace SD3)
+                // B. SMART AI & VIDEO VAULT: Supports 'hybrid', 'real_video' (YouTube B-Roll / Custom Video), and 'ai_images' (Hugging Face: Z-Image Turbo y respaldos)
                 if (!plan.hf_prompt || plan.hf_prompt.trim().length < 5) {
                     plan.hf_prompt = `Vertical 9:16 documentary photo about ${content.protagonist_en || ideaTitle}: ${scene.visual || scene.text}, natural light, no text`
                 }
