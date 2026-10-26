@@ -324,7 +324,7 @@ STEP 2 — "visual_strategy" for EACH scene:
 - "real_footage": real filmed video of the actual event, place or person (news broadcasts). Use it for the most visual moments (the place, the operation, the crowd, the match).
 - "news_card": a designed editorial text card (kicker + headline + one key fact). Use it for facts, accusations, legal details, numbers, context, reactions, open questions, and anything that cannot be shown truthfully with footage.
 - "ai_image": AI illustration. ONLY allowed when topic_type is "evergreen" AND the scene does not show a real identifiable person. NEVER use ai_image for news topics: AI cannot depict real events, real places or real people truthfully.
-For news topics aim for roughly half "real_footage" and half "news_card". The LAST scene (call to action) must be "news_card".
+For news topics use "real_footage" for EVERY scene except the LAST one (call to action), which must be "news_card". Real footage of the event, the place or the crowd illustrates facts, numbers and reactions too (the narration and subtitles carry the data). Never choose "news_card" just because a scene states a fact.
 
 STEP 3 — fields for each scene:
 - "yt_search_query": 3-7 words in the LANGUAGE OF THE LOCAL MEDIA COVERAGE (Spanish for Ecuador, Latin America or Spain; English for the US or UK). Describe what the CAMERA would film: real names and the real place plus the action ("operativo", "llegada", "incendio", "rueda de prensa", "imágenes"). You may add "noticia" or a local TV outlet (Ecuador: Ecuavisa, Teleamazonas, TC Televisión). Never include "en vivo", "live", "short" or "shorts".
@@ -414,11 +414,13 @@ Respond ONLY with JSON: {"topic_type": "...", "location_label": "...", "scenes":
                     scene_tags: [ideaCategory || 'viral', `scene_${i + 1}`],
                     yt_search_query: `${ideaTitle} noticia`.slice(0, 80),
                     hf_prompt: `Vertical 9:16 photorealistic action shot of ${content.protagonist_en || ideaTitle}: ${scene.visual}, dramatic lighting, 8k, no text`,
-                    visual_strategy: isNewsTopic ? (i % 2 === 0 && i < scenesData.length - 1 ? 'real_footage' : 'news_card') : undefined,
+                    visual_strategy: isNewsTopic ? (i < scenesData.length - 1 ? 'real_footage' : 'news_card') : undefined,
                 }
                 // Estrategia efectiva: en noticias NUNCA imagen IA (metraje real o tarjeta informativa)
+                // Noticias: video real en todas las escenas; solo el cierre es tarjeta. Si no aparece un clip
+                // utilizable para una escena, más abajo cae a tarjeta como respaldo.
                 const strategy: 'real_footage' | 'news_card' | 'default' = isNewsTopic
-                    ? (plan.visual_strategy === 'real_footage' ? 'real_footage' : 'news_card')
+                    ? (i === scenesData.length - 1 ? 'news_card' : 'real_footage')
                     : (plan.visual_strategy === 'news_card' ? 'news_card' : 'default')
 
                 await report(10 + Math.round((60 * i) / scenesData.length), `Escena ${i + 1} de ${scenesData.length}`, 'Voz, subtítulos y visual')
