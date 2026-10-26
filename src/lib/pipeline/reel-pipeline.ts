@@ -302,6 +302,8 @@ export async function runReelPipeline(params: {
             let topicType: 'news_real_people' | 'news_event' | 'evergreen' =
                 factCheck?.verified ? 'news_event' : 'evergreen'
             let locationLabel: string | undefined = factCheck?.location?.replace(/[.\s]+$/, '')
+            // Si el protagonista es una persona real, NINGUNA imagen IA puede mostrar una cara o cuerpo inventado
+            let subjectIsRealPerson = false
             const defaultSubjectKey = (content.protagonist_en || ideaTitle).slice(0, 35)
 
             try {
@@ -337,15 +339,17 @@ STEP 3 — fields for each scene:
 - "subject_key": short consistent 1-3 word English slug for the main subject, SAME in all scenes (e.g. "luisa_gonzalez", "lionel_messi").
 - "scene_tags": 4 specific English keywords for this scene.
 Also return "location_label": Spanish "Ciudad o provincia, País" where the event happens, or "" if not applicable.
+Also return "subject_is_real_person": true if the MAIN SUBJECT of the video is a specific real, identifiable person (living or historical: e.g. Margaret Hamilton, Messi, a politician). Then NO scene may show an invented face or body standing in for that person.
 
 SCENES (${scenesData.length}):
 ${scenesData.map((s, idx) => `${idx + 1}. Narration: "${s.text}" | Visual hint: "${s.visual}"`).join('\n')}
 
-Respond ONLY with JSON: {"topic_type": "...", "location_label": "...", "scenes": [exactly ${scenesData.length} objects in order]}`
+Respond ONLY with JSON: {"topic_type": "...", "location_label": "...", "subject_is_real_person": false, "scenes": [exactly ${scenesData.length} objects in order]}`
                 const plan = await generateJson(plannerPrompt, StoryboardPlanSchema, { label: 'StoryboardPlanner' })
                 if (plan.scenes.length === scenesData.length) {
                     visualPlans = plan.scenes as SceneVisualPlan[]
                     topicType = plan.topic_type
+                    subjectIsRealPerson = plan.subject_is_real_person === true || topicType === 'news_real_people'
                     if (plan.location_label && plan.location_label.trim()) locationLabel = plan.location_label.trim().replace(/[.\s]+$/, "")
                     const counts = visualPlans.reduce<Record<string, number>>((acc, p) => {
                         const k = p.visual_strategy || 'sin_estrategia'
@@ -487,8 +491,9 @@ Respond ONLY with JSON: {"topic_type": "...", "location_label": "...", "scenes":
                         subjectKey: plan.subject_key || defaultSubjectKey,
                         sceneTags: plan.scene_tags || [],
                         usedFiles: usedVaultFiles,
-                        realPerson: Boolean(plan.shows_real_person),
-                        personFreePrompt: plan.person_free_prompt
+                        realPerson: Boolean(plan.shows_real_person) || subjectIsRealPerson,
+                        personFreePrompt: plan.person_free_prompt,
+                        sceneText: scene.text,
                     })
                 }
                 // ANIMACIÓN (Hugging Face): las primeras N escenas con imagen IA se convierten en un clip con
@@ -532,7 +537,7 @@ Respond ONLY with JSON: {"topic_type": "...", "location_label": "...", "scenes":
                     hfPrompt: plan.hf_prompt,
                     ytSearchQuery: plan.yt_search_query,
                     category: ideaCategory || 'general',
-                    realPerson: Boolean(plan.shows_real_person),
+                    realPerson: Boolean(plan.shows_real_person) || subjectIsRealPerson,
                     personFreePrompt: plan.person_free_prompt,
                     sourceKind: vaultResult.kind,
                     card: vaultResult.kind === 'news_card' ? {
@@ -694,7 +699,8 @@ Respond ONLY with JSON: {"topic_type": "...", "location_label": "...", "scenes":
                                 : [`healed_${Date.now().toString().slice(-4)}`],
                             usedFiles: usedVaultFiles,
                             realPerson: targetScene.realPerson,
-                            personFreePrompt: targetScene.personFreePrompt
+                            personFreePrompt: targetScene.personFreePrompt,
+                            sceneText: targetScene.sceneData.text,
                         })
                         // La revisión visual rechazó las imágenes IA: tarjeta informativa en su lugar
                         if (healedVault.kind === 'news_card' && !healedVault.imagePath) {

@@ -48,3 +48,4 @@ docker compose --env-file .env.local up --build -d
 - n8n se alcanza desde el contenedor por `host.docker.internal` (variable `N8N_LOCALHOST_ALIAS`).
 - Los reels, el vault y los archivos subidos quedan en volúmenes de Docker (`docker compose down` los conserva; `down -v` los borra).
 - Logs: `docker compose logs -f app`.
+- Despliegue con verificación y vuelta atrás: `npm run deploy:local`. CI/CD con GitHub Actions: ver [docs/CICD.md](docs/CICD.md).

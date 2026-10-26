@@ -10,7 +10,8 @@
     "start": "next start",
     "lint": "eslint",
     "clean:media": "node scripts/cleanup-media.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "deploy:local": "node scripts/deploy-local.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

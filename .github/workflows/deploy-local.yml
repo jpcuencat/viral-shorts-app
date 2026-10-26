@@ -1,0 +1,40 @@
+# CD: cuando el CI de master pasa, despliega en el Docker de este equipo (runner autoalojado con la etiqueta
+# "docker-local"). Verifica /api/health y vuelve a la versión anterior si la nueva no arranca bien.
+# Configuración (una sola vez): ver docs/CICD.md
+name: Deploy local (Docker)
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-local
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: [self-hosted, docker-local]
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Escribir variables de entorno
+        env:
+          ENV_LOCAL: ${{ secrets.ENV_LOCAL }}
+        run: node -e "if(!process.env.ENV_LOCAL){console.error('Falta el secreto ENV_LOCAL');process.exit(1)} require('fs').writeFileSync('.env.local', process.env.ENV_LOCAL)"
+
+      - name: Desplegar en Docker local
+        env:
+          APP_VERSION: ${{ github.event.workflow_run.head_sha || github.sha }}
+          SKIP_CHECKS: '1'
+        run: node scripts/deploy-local.mjs
+
+      - name: Borrar variables de entorno del runner
+        if: always()
+        run: node -e "try{require('fs').unlinkSync('.env.local')}catch{}"

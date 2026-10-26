@@ -156,7 +156,8 @@ export async function replaceSingleReelScene(
                 sceneTags: [`replaced_${Date.now()}_${Math.floor(Math.random() * 999)}`],
                 usedFiles,
                 realPerson: target.realPerson,
-                personFreePrompt: customText || target.personFreePrompt
+                personFreePrompt: customText || target.personFreePrompt,
+                sceneText: target.text,
             })
 
         // La revisión visual rechazó todas las imágenes IA (persona falsa o letras inventadas)

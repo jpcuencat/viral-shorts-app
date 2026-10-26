@@ -64,6 +64,7 @@ export const SceneVisualPlanListSchema = z.array(SceneVisualPlanSchema)
 export const StoryboardPlanSchema = z.looseObject({
     topic_type: z.enum(['news_real_people', 'news_event', 'evergreen']).catch('evergreen'),
     location_label: z.string().optional().catch(undefined),
+    subject_is_real_person: z.boolean().optional().catch(undefined),
     scenes: z.array(SceneVisualPlanSchema.extend({
         visual_strategy: z.enum(['real_footage', 'news_card', 'ai_image']).optional().catch(undefined),
         card_kicker: z.string().optional().catch(undefined),

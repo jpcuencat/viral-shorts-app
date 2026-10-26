@@ -597,14 +597,15 @@ Respond ONLY with JSON: {"valid": bool, "has_overlay_text": bool, "has_logo_or_w
     }
 
     /** Revisión visual de una imagen IA con Gemini. Si la revisión no está disponible, se acepta (no bloquea el reel). */
-    private async checkAiImage(buffer: Buffer, prompt: string, realPerson: boolean): Promise<{ ok: boolean; reason: string }> {
+    private async checkAiImage(buffer: Buffer, prompt: string, realPerson: boolean, sceneText?: string): Promise<{ ok: boolean; reason: string }> {
         try {
             const small = await sharp(buffer).resize(512, 910, { fit: 'inside' }).jpeg({ quality: 80 }).toBuffer()
             const verdict = await generateJson([
-                `You review an AI-generated image for a news & explainer short video. Intended scene: "${prompt.slice(0, 400)}".
+                `You review an AI-generated image for a news & explainer short video. Intended scene: "${prompt.slice(0, 400)}".${sceneText ? `
+The narrator says during this image (Spanish): "${sceneText.slice(0, 300)}".` : ''}
 Set "has_person": true if ANY human being, face, silhouette that reads as a specific person, or human body is clearly visible (tiny distant crowd specks do NOT count).
 Set "has_visible_text": true ONLY if there is PROMINENT fake lettering a viewer would notice and read as misspelled or gibberish: large words on banners, signs, posters, name tags, vests, uniforms, headlines or labels in the foreground. Small, distant, blurry or partial text on screens, papers, chalkboards, panels or code listings does NOT count.
-Set "is_relevant": true unless the image clearly shows something unrelated to the intended scene (small period inaccuracies do NOT matter).
+Set "is_relevant": true if a viewer hearing the narration would see the connection: it shows the place, objects, era or action the line talks about (small period inaccuracies do NOT matter). Generic filler unrelated to the line (an empty desert, a random landscape, abstract textures, unrelated objects) is NOT relevant.
 Respond ONLY with JSON: {"has_person": bool, "has_visible_text": bool, "is_relevant": bool, "reason": "short explanation"}`,
                 { inlineData: { data: small.toString('base64'), mimeType: 'image/jpeg' } },
             ], AiImageGateSchema, { label: 'AIImageGate', retries: 1 })
@@ -641,6 +642,8 @@ Respond ONLY with JSON: {"has_person": bool, "has_visible_text": bool, "is_relev
         usedFiles: Set<string>
         realPerson?: boolean
         personFreePrompt?: string
+        /** Frase que dice el narrador en esta escena (la imagen se revisa contra ella). */
+        sceneText?: string
     }): Promise<VisualResult> {
         const {
             prompt,
@@ -654,7 +657,8 @@ Respond ONLY with JSON: {"has_person": bool, "has_visible_text": bool, "is_relev
             sceneTags,
             usedFiles,
             realPerson = false,
-            personFreePrompt
+            personFreePrompt,
+            sceneText
         } = params
 
         // A. Video propio subido por el usuario
@@ -756,7 +760,7 @@ Respond ONLY with JSON: {"has_person": bool, "has_visible_text": bool, "is_relev
                     continue
                 }
             }
-            const gate = await this.checkAiImage(buf, attemptPrompt, realPerson)
+            const gate = await this.checkAiImage(buf, attemptPrompt, realPerson, sceneText)
             if (gate.ok) {
                 imageBuffer = buf
                 providerLabel = label

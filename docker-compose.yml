@@ -1,6 +1,8 @@
-# Uso (desde la carpeta del proyecto):
+# Despliegue local (lo usan `npm run deploy:local` y el CD de GitHub Actions):
 #   docker compose --env-file .env.local up --build -d
-# Abre http://localhost:3100. Antes, detén `npm run dev:all`: los dos workers tomarían los mismos trabajos de la cola.
+# App en http://localhost:3100. Antes, detén `npm run dev:all`: los dos workers tomarían los mismos trabajos de la cola.
+name: viral-shorts-app
+
 services:
   app:
     build:
@@ -8,9 +10,11 @@ services:
       args:
         NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
         NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
-    image: viral-shorts-app:local
+    image: viral-shorts-app:${APP_VERSION:-latest}
+    container_name: viral-shorts-app
     env_file: .env.local
     environment:
+      APP_VERSION: ${APP_VERSION:-latest}
       # n8n corre en el equipo: desde el contenedor se llega por host.docker.internal
       N8N_LOCALHOST_ALIAS: host.docker.internal
     extra_hosts:
@@ -24,6 +28,12 @@ services:
       - photos:/app/public/custom-photos
       - videos:/app/public/custom-videos
       - logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
     restart: unless-stopped
 
 volumes:

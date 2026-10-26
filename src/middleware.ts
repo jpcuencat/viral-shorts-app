@@ -16,6 +16,6 @@ export const config = {
          *   lo que corta los videos subidos. Esa ruta valida la sesión por su cuenta.
          * - api/n8n: llamadas de n8n (sin sesión), autenticadas con el secreto del webhook.
          */
-        '/((?!_next/static|_next/image|favicon.ico|api/upload-video|api/n8n|.*\\.(?:svg|png|jpg|jpeg|gif|webp|mp4|mp3|wav)$).*)',
+        '/((?!_next/static|_next/image|favicon.ico|api/upload-video|api/n8n|api/health|.*\\.(?:svg|png|jpg|jpeg|gif|webp|mp4|mp3|wav)$).*)',
     ],
 }
