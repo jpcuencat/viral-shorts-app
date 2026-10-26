@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
+import { Input } from '@/components/ui/input'
 import { Loader2, Sparkles, Check, Flame, ExternalLink } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
@@ -31,6 +32,7 @@ export default function GenerateIdeasPage() {
     const [loading, setLoading] = useState(false)
     const [saving, setSaving] = useState(false)
     const [elapsed, setElapsed] = useState(0)
+    const [focus, setFocus] = useState('')
     const supabase = createClient()
     const router = useRouter()
 
@@ -59,7 +61,7 @@ export default function GenerateIdeasPage() {
     async function handleGenerate() {
         setLoading(true); setIdeas([]); setDiscarded([]); setSelected([])
         try {
-            const res = await generateIdeas(isTrendsBucket ? 'OPEN_TRENDS' : target)
+            const res = await generateIdeas(isTrendsBucket ? 'OPEN_TRENDS' : target, 6, focus.trim() || undefined)
             if (res.error) alert(res.error)
             setIdeas(res.data || [])
             setDiscarded(res.discarded || [])
@@ -117,6 +119,13 @@ export default function GenerateIdeasPage() {
                         </Select>
                     </div>
                 )}
+                <div className="space-y-2 basis-full">
+                    <Label>Tema o enfoque (opcional)</Label>
+                    <Input value={focus} onChange={e => setFocus(e.target.value)} maxLength={300}
+                        onKeyDown={e => e.key === 'Enter' && !loading && handleGenerate()}
+                        placeholder="Ej.: la renuncia del técnico de la Selección, el apagón en Quito, lo nuevo de ChatGPT…" />
+                    <p className="text-xs text-muted-foreground">Si lo escribes, todas las ideas salen de ese tema (noticias de las últimas 48 h), cada una con un ángulo distinto.</p>
+                </div>
                 <Button onClick={handleGenerate} disabled={loading} size="lg" className="min-w-[170px]">
                     {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />{elapsed}s</> : <><Flame className="mr-2 h-4 w-4 text-orange-400" />Generar ideas</>}
                 </Button>

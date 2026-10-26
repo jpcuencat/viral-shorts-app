@@ -8,7 +8,7 @@ import { loadCategoryTree, resolveCategory } from '@/lib/ideas/taxonomy'
 /**
  * Genera ideas en tendencia verificadas. `categoryId` = principal o subcategoría; 'OPEN_TRENDS' = todas.
  */
-export async function generateIdeas(categoryId: string, count: number = 6): Promise<{ data?: TrendIdea[]; discarded?: { title: string; reason: string }[]; poolSize?: number; error?: string }> {
+export async function generateIdeas(categoryId: string, count: number = 6, focus?: string): Promise<{ data?: TrendIdea[]; discarded?: { title: string; reason: string }[]; poolSize?: number; error?: string }> {
     if (!process.env.GEMINI_API_KEY) return { error: 'Falta GEMINI_API_KEY.' }
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
@@ -19,6 +19,7 @@ export async function generateIdeas(categoryId: string, count: number = 6): Prom
             userId: user.id,
             categoryId: categoryId && categoryId !== 'OPEN_TRENDS' ? categoryId : undefined,
             count,
+            focus,
         })
         if (res.ideas.length === 0) {
             return { data: [], discarded: res.discarded, poolSize: res.poolSize, error: res.poolSize === 0 ? 'No llegaron noticias ni tendencias. Revisa la conexión e intenta otra vez.' : undefined }

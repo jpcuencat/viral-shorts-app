@@ -67,8 +67,19 @@ export function todayLabel(): string {
 }
 
 /** Pool de tendencias: lo de la categoría (noticias de las últimas horas) + lo que es tendencia en el mundo ahora. */
-async function gatherPool(tree: CategoryTree, categoryId?: string): Promise<TrendItem[]> {
+async function gatherPool(tree: CategoryTree, categoryId?: string, focus?: string): Promise<TrendItem[]> {
     let items: TrendItem[] = []
+    // Enfoque escrito por el creador: sus noticias van primero (las últimas 48 h, español e inglés)
+    let focusItems: TrendItem[] = []
+    if (focus) {
+        const gl = categoryId ? subtopicsFor(tree, categoryId).map(s => TOPIC_SEARCH[s.slug]?.gl).find(Boolean) : undefined
+        const [es, esUs, en] = await Promise.all([
+            gl ? searchGoogleNews(focus, { gl, limit: 12, when: '2d', label: 'Enfoque pedido' }) : Promise.resolve([] as TrendItem[]),
+            searchGoogleNews(focus, { limit: 12, when: '2d', label: 'Enfoque pedido' }),
+            searchGoogleNews(focus, { lang: 'en', limit: 8, when: '2d', label: 'Enfoque pedido (EN)' }),
+        ])
+        focusItems = [...es, ...esUs, ...en]
+    }
     if (categoryId) {
         const subs = subtopicsFor(tree, categoryId)
         const perSub = subs.length > 1 ? 4 : 10
@@ -85,6 +96,7 @@ async function gatherPool(tree: CategoryTree, categoryId?: string): Promise<Tren
     } else {
         items = await getDailyTrends()
     }
+    items = [...focusItems, ...items]
     // Fuera lo viejo: noticias de más de 48 h (las tendencias de Google/X son "ahora")
     const fresh = items.filter(t => t.source === 'google_trends' || t.source === 'x_twitter' || ageHours(t.pubDate) <= MAX_NEWS_AGE_H)
     const seen = new Set<string>()
@@ -121,10 +133,12 @@ export async function generateTrendIdeas(params: {
     db: SupabaseClient
     userId?: string
     categoryId?: string          // principal o subcategoría; vacío = modo abierto (todas)
+    focus?: string               // tema o enfoque escrito por el creador (opcional)
     count?: number
     onProgress?: (msg: string) => void | Promise<void>
 }): Promise<{ ideas: TrendIdea[]; poolSize: number; discarded: { title: string; reason: string }[] }> {
     const { db, userId, categoryId } = params
+    const focus = (params.focus || '').trim().slice(0, 300)
     const count = params.count ?? 6
     const progress = params.onProgress || (() => { })
     const tree = await loadCategoryTree(db)
@@ -132,7 +146,7 @@ export async function generateTrendIdeas(params: {
     const scopeLabel = categoryId ? categoryLabel(tree, categoryId) : 'Todas (modo abierto)'
 
     await progress('Leyendo noticias y tendencias de las últimas horas')
-    const pool = await gatherPool(tree, categoryId)
+    const pool = await gatherPool(tree, categoryId, focus)
     if (pool.length === 0) return { ideas: [], poolSize: 0, discarded: [] }
 
     // Ideas que el canal ya tiene (últimos 30 días) para no repetir
@@ -150,7 +164,7 @@ export async function generateTrendIdeas(params: {
     const prompt = `Eres el director de contenido de RADAR 593, un canal de Shorts/Reels/TikTok de NOTICIAS y tendencias en ESPAÑOL (Ecuador y el mundo).
 HOY ES: ${today} (hora de Ecuador).
 ÁMBITO PEDIDO: ${scopeLabel}
-
+${focus ? `ENFOQUE PEDIDO POR EL CREADOR: "${focus}"\nTODAS las ideas deben tratar de este enfoque (son las noticias marcadas "Enfoque pedido"), cada una con un ángulo o novedad distinta; no repitas la misma idea con otras palabras.\n` : ''}
 LISTA DE TENDENCIAS Y NOTICIAS (cada una con su antigüedad; usa SOLO estas, tu memoria puede estar desactualizada):
 ${poolText(pool)}
 
@@ -244,6 +258,6 @@ Responde SOLO con JSON: [{"index":0,"status":"vigente|actualizada|descartar","ti
         })
     })
     ideas.sort((a, b) => b.viralScore - a.viralScore)
-    console.log(`[IdeaEngine] ${scopeLabel}: ${pool.length} tendencias → ${candidates.length} propuestas → ${ideas.length} verificadas (${discarded.length} descartadas)`)
+    console.log(`[IdeaEngine] ${scopeLabel}${focus ? ` · enfoque "${focus}"` : ''}: ${pool.length} tendencias → ${candidates.length} propuestas → ${ideas.length} verificadas (${discarded.length} descartadas)`)
     return { ideas: ideas.slice(0, count), poolSize: pool.length, discarded }
 }
