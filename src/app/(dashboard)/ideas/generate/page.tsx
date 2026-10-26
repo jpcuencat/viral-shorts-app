@@ -37,6 +37,13 @@ export default function GenerateIdeasPage() {
     useEffect(() => {
         supabase.from('categories').select('id, name, slug, parent_id, sort_order').then(({ data }) => setCats((data || []) as Cat[]))
     }, [])
+    // Desde el Dashboard (Refresh Trends): búsqueda automática en modo abierto; nada se guarda sin elegirlo
+    useEffect(() => {
+        if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('auto') === '1') {
+            window.history.replaceState(null, '', '/ideas/generate')
+            handleGenerate()
+        }
+    }, [])
     useEffect(() => {
         if (!loading) return
         setElapsed(0)
