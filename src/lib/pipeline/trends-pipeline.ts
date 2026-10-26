@@ -1,66 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { getDailyTrends, getTodayTrendCategoryName } from '@/lib/trends'
-import { generateJson } from '@/lib/ai/gemini'
-import { TrendSelectionSchema } from '@/lib/ai/schemas'
-import { insightsPromptBlock, refreshInsightsIfStale } from '@/lib/learning/insights'
+import { getTodayTrendCategoryName } from '@/lib/trends'
 import { JobCancelledError, type ProgressReporter } from '@/lib/jobs/types'
-
-/**
- * Helper: Finds an existing category by name (case-insensitive) or auto-creates it in Supabase
- */
-async function resolveOrCreateCategory(
-    supabase: any,
-    categoriesCache: { id: string; name: string }[],
-    rawName: string
-): Promise<{ id: string; name: string }> {
-    const cleanName = (rawName || getTodayTrendCategoryName()).trim()
-    const normalize = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
-
-    const existing = categoriesCache.find(c => normalize(c.name) === normalize(cleanName))
-    if (existing) return existing
-
-    const slug = cleanName
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/\s+/g, '-')
-        .replace(/[^\w-]/g, '')
-
-    // Check by slug in DB first in case it already exists
-    const { data: bySlug } = await supabase
-        .from('categories')
-        .select('id, name')
-        .eq('slug', slug)
-        .maybeSingle()
-
-    if (bySlug) {
-        categoriesCache.push(bySlug)
-        return bySlug
-    }
-
-    // Create the new category automatically
-    const { data: created, error } = await supabase
-        .from('categories')
-        .insert({ name: cleanName, slug })
-        .select('id, name')
-        .single()
-
-    if (!error && created) {
-        console.log(`[ProcessTrends] Auto-created new category: "${created.name}" (${slug})`)
-        categoriesCache.push(created)
-        return created
-    }
-
-    return categoriesCache[0]
-}
-
-/** Categorías temáticas estables. Las tendencias se clasifican SOLO en estas (o en otras temáticas que ya existan),
- * nunca en una categoría nueva por día ni en nombres inventados por la IA. */
-/** Bandeja ÚNICA para lo que no encaja en ninguna temática (en vez de crear una categoría por día). */
-const CATCH_ALL_CATEGORY = 'Tendencias'
-const BASE_CATEGORIES = [CATCH_ALL_CATEGORY, 'Ecuador', 'Mundo', 'Política', 'Deportes', 'Cultura Pop', 'Cine y Series', 'Tecnología', 'Finanzas', 'Ciencia', 'Curiosidades']
-const DAILY_BUCKET_RE = /^tendencias\s+\d/i
-const normalizeName = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
+import { refreshInsightsIfStale } from '@/lib/learning/insights'
+import { generateTrendIdeas } from '@/lib/ideas/idea-engine'
 
 export interface TrendsPipelineResult {
     processed: number
@@ -70,9 +12,9 @@ export interface TrendsPipelineResult {
 }
 
 /**
- * Analiza las tendencias mundiales, elige las más virales con Gemini y crea ideas PENDIENTES de aprobación
- * (el guion se genera después, cuando el creador aprueba la idea y lo pide).
- * Se ejecuta en el worker de trabajos con un cliente de base de datos inyectado.
+ * Tendencias automáticas: usa el mismo motor que el generador (noticias de las últimas 48 h, fecha de hoy,
+ * verificación con titulares recientes, demanda de búsqueda) en modo abierto y crea las mejores 4 ideas
+ * PENDIENTES de aprobación, cada una en su subcategoría (o en "Tendencias" si no encaja). Nunca crea categorías.
  */
 export async function runTrendsPipeline(params: {
     db: SupabaseClient
@@ -82,176 +24,61 @@ export async function runTrendsPipeline(params: {
     const supabase = params.db
     const userId = params.userId
     const report: ProgressReporter = params.report || (async () => { })
-    const scriptIds: string[] = []
-    await report(3, 'Preparando categorías')
+    const todayTrendCategory = getTodayTrendCategoryName()
 
-    const todayTrendCategory = getTodayTrendCategoryName() // e.g. "Tendencias 16 Oct"
-
-    // 1. Fetch Existing Categories (and ensure today's trend category exists as an option)
-    const { data: dbCategories } = await supabase.from('categories').select('id, name')
-    const categoriesCache: { id: string; name: string }[] = dbCategories ? [...dbCategories] : []
-
-    // Categorías permitidas: las temáticas existentes (sin las antiguas "Tendencias DD Mes") + las base
-    const allowedCategories = [...new Set([
-        ...categoriesCache.map(c => c.name).filter(n => !DAILY_BUCKET_RE.test(n)),
-        ...BASE_CATEGORIES,
-    ].map(n => n.trim()))]
-    const pickAllowedCategory = (raw?: string): string => {
-        const wanted = normalizeName(raw || '')
-        return allowedCategories.find(c => normalizeName(c) === wanted) || CATCH_ALL_CATEGORY
-    }
-    const categoryNames = allowedCategories
-
-    // 2. Tendencias en vivo a nivel MUNDIAL (Google Trends multi-país, X mundial, noticias internacionales, redes; Ecuador incluido)
-    await report(8, 'Leyendo tendencias mundiales', 'Google Trends de varios países, X, noticias y redes')
-    const allTrends = await getDailyTrends()
-    if (allTrends.length === 0) {
-        return { processed: 0, created: 0, trendCategory: todayTrendCategory, scriptIds }
-    }
-
-    // 3. Filter out already processed trend titles (from both `trends` and `ideas.ai_metadata`)
-    const { data: existingTrends } = await supabase
-        .from('trends')
-        .select('title')
-        .order('created_at', { ascending: false })
-        .limit(120)
-
-    const { data: existingIdeaTrends } = await supabase
-        .from('ideas')
-        .select('title, ai_metadata')
-        .order('created_at', { ascending: false })
-        .limit(120)
-
-    const existingTitles = new Set<string>([
-        ...(existingTrends || []).map(t => (t.title || '').toLowerCase().trim()),
-        ...(existingIdeaTrends || [])
-            .map((i: any) => (i.ai_metadata?.matched_trend || '').toLowerCase().trim())
-            .filter(Boolean)
-    ])
-
-    let freshTrends = allTrends.filter(t => !existingTitles.has(t.title.toLowerCase().trim())).slice(0, 30)
-    // Si todas se vieron recientemente, igual se toman las 15 primeras para generar ángulos nuevos
-    if (freshTrends.length === 0) {
-        freshTrends = allTrends.slice(0, 15)
-    }
-
-    // 3.B Lo aprendido del canal (métricas reales + crítico + correcciones) para priorizar
+    await report(5, 'Actualizando lo aprendido del canal')
     await refreshInsightsIfStale(supabase, userId, 24)
-    const lessons = await insightsPromptBlock(supabase, userId, 'trends')
 
-    // 4. Hybrid Open Evaluation using gemini-3-flash-preview
-    const prompt = `
-Actúa como un Director de Contenido Viral GLOBAL para YouTube Shorts, TikTok e Instagram Reels, que produce en ESPAÑOL para una audiencia hispanohablante internacional.
+    let pct = 10
+    const res = await generateTrendIdeas({
+        db: supabase,
+        userId,
+        count: 4,
+        onProgress: async msg => { pct = Math.min(80, pct + 20); await report(pct, msg) },
+    })
 
-CATEGORÍAS PERMITIDAS (usa EXACTAMENTE uno de estos nombres en "category_name"; no inventes otros):
-${JSON.stringify(categoryNames)}
+    let created = 0
+    for (let k = 0; k < res.ideas.length; k++) {
+        const idea = res.ideas[k]
+        await report(85 + Math.round((10 * k) / Math.max(1, res.ideas.length)), `Guardando idea ${k + 1} de ${res.ideas.length}`, idea.title)
+        try {
+            const { data: trendRecord } = await supabase.from('trends').insert({
+                title: idea.matchedTrend || idea.title,
+                link: idea.trendLink || null,
+                traffic: `${idea.headlines.length} titulares · ${Math.round(idea.newestAgeHours)} h`,
+                source: 'idea_engine',
+                processed: true,
+                user_id: userId,
+            }).select('id').maybeSingle()
 
-TENDENCIAS EN TIEMPO REAL A NIVEL MUNDIAL (Google Trends de varios países, X/Twitter mundial y Ecuador, noticias internacionales y de Ecuador, virales en redes, Reddit):
-${freshTrends.map((t, idx) => `[${idx}] (${t.traffic}) "${t.title}" ${t.newsItemTitle && t.newsItemTitle !== t.title ? `- Contexto: ${t.newsItemTitle}` : ''}`).join('\n')}
-
-${lessons ? lessons + '\n\n' : ''}REGLAS DE SELECCIÓN (IMPORTANTE):
-1. Selecciona las 4 tendencias con MAYOR potencial viral a nivel MUNDIAL, sin favorecer a ningún país (Ecuador es un mercado más y compite en igualdad). Los temas que son tendencia en varios países a la vez son señal fuerte. Busca variedad: no elijas las 4 del mismo país o tema, ni dos ideas sobre la misma noticia.
-2. La categoría NO es un filtro: elige las tendencias por su potencial viral aunque no encajen en ninguna categoría.
-   "category_name": el nombre EXACTO de la CATEGORÍA PERMITIDA que mejor describa el tema (noticia local de Ecuador → "Ecuador"; internacional → "Mundo" salvo que encaje mejor una temática como Deportes o Tecnología). Si no encaja claramente en ninguna, usa "Tendencias". Nunca inventes una categoría nueva.
-3. VERACIDAD del título y la descripción: gancho llamativo pero fiel a lo que dice la tendencia. NO inventes documentos filtrados, secretos, amenazas, cifras ni detenciones que el titular no menciona; usa "presunto" para acusaciones. Nada de "SHOCK" o "ALERTA" si los hechos no lo justifican.
-
-Responde SOLO con un JSON Array válido con este formato exacto:
-[
-  {
-    "trend_index": 0,
-    "category_name": "Tendencias",
-    "title": "Título viral en español con gancho irresistible para Short",
-    "description": "Explicación clara de qué está pasando en esta tendencia/red social y el ángulo narrativo del video",
-    "viral_score": 96,
-    "estimated_duration": 45
-  }
-]
-`
-
-    let ideasCreated = 0
-
-    try {
-        await report(25, 'Eligiendo las tendencias más virales', `${freshTrends.length} tendencias candidatas`)
-        const selectedIdeas = await generateJson(prompt, TrendSelectionSchema, { label: 'ProcessTrends' })
-
-        if (Array.isArray(selectedIdeas)) {
-            const chosen = selectedIdeas.slice(0, 4)
-            for (let k = 0; k < chosen.length; k++) {
-                const item = chosen[k]
-                await report(35 + Math.round((60 * k) / chosen.length), `Creando idea ${k + 1} de ${chosen.length}`, item.title)
-                const trend = freshTrends[item.trend_index] || freshTrends[0]
-                if (!trend) continue
-
-                // 5. Try creating Trend Record in Supabase (non-blocking if RLS restricts `trends` table)
-                let trendRecordId: string | null = null
-                const { data: trendRecord, error: trendError } = await supabase
-                    .from('trends')
-                    .insert({
-                        title: trend.title,
-                        link: trend.link,
-                        traffic: trend.traffic,
-                        source: trend.source || null,
-                        processed: true,
-                        user_id: userId
-                    })
-                    .select('id')
-                    .maybeSingle()
-
-                if (!trendError && trendRecord?.id) {
-                    trendRecordId = trendRecord.id
-                } else if (trendError) {
-                    console.warn('[ProcessTrends] Note: trends table RLS skipped direct insert, storing trend in ideas.ai_metadata instead:', trendError.message)
-                }
-
-                // 6. Hybrid Category Resolution: Match existing OR auto-create new thematic / daily trend category!
-                const resolvedCategory = await resolveOrCreateCategory(
-                    supabase,
-                    categoriesCache,
-                    pickAllowedCategory(item.category_name)
-                )
-
-                // 7. Create Idea in Supabase (including user_id and rich trend metadata)
-                const ideaPayload: Record<string, any> = {
-                    title: item.title,
-                    description: item.description,
-                    category_id: resolvedCategory?.id,
-                    // El creador revisa y aprueba; el guion se genera solo cuando él lo pide
-                    status: 'pending_approval',
-                    ai_metadata: {
-                        viral_score: item.viral_score || 95,
-                        estimated_duration: item.estimated_duration || 45,
-                        source: 'auto_trend',
-                        trend_network: trend.source || 'global',
-                        trend_bucket: todayTrendCategory,
-                        matched_trend: trend.title,
-                        trend_link: trend.link,
-                        trend_traffic: trend.traffic
-                    }
-                }
-                if (trendRecordId) {
-                    ideaPayload.source_trend_id = trendRecordId
-                }
-                ideaPayload.user_id = userId
-
-                const { data: ideaRecord, error: ideaError } = await supabase
-                    .from('ideas')
-                    .insert(ideaPayload)
-                    .select('id')
-                    .single()
-
-                if (ideaError) {
-                    console.error('[ProcessTrends] Error inserting idea:', ideaError)
-                    continue
-                }
-
-                if (ideaRecord) ideasCreated++
-            }
+            const { error } = await supabase.from('ideas').insert({
+                title: idea.title,
+                description: idea.description,
+                category_id: idea.categoryId || null,
+                status: 'pending_approval',
+                user_id: userId,
+                ...(trendRecord?.id ? { source_trend_id: trendRecord.id } : {}),
+                ai_metadata: {
+                    source: 'auto_trend',
+                    viral_score: idea.viralScore,
+                    score_parts: idea.scoreParts,
+                    estimated_duration: idea.estimatedDuration,
+                    trend_bucket: todayTrendCategory,
+                    matched_trend: idea.matchedTrend,
+                    trend_link: idea.trendLink,
+                    angle: idea.angle,
+                    why_now: idea.whyNow,
+                    headlines: idea.headlines.slice(0, 3),
+                    search_demand: idea.demand,
+                    verified_at: new Date().toISOString(),
+                },
+            })
+            if (error) console.error('[ProcessTrends] No se pudo guardar la idea:', error.message)
+            else created++
+        } catch (e) {
+            if (e instanceof JobCancelledError) throw e
+            console.error('[ProcessTrends] Error guardando idea:', e)
         }
-    } catch (e) {
-        if (e instanceof JobCancelledError) throw e
-        console.error('[ProcessTrends] Error evaluating trends batch:', e)
-        if (ideasCreated === 0) throw e
     }
-
-    return { processed: freshTrends.length, created: ideasCreated, trendCategory: todayTrendCategory, scriptIds }
+    return { processed: res.poolSize, created, trendCategory: todayTrendCategory, scriptIds: [] }
 }

@@ -1,3 +1,4 @@
+import { flattenCategories } from '@/lib/ideas/category-options'
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -18,9 +19,10 @@ export default async function NewIdeaPage() {
     const supabase = await createClient()
 
     // Fetch categories for the select dropdown
-    const { data: categories } = await supabase
+    const { data: categoryRows } = await supabase
         .from('categories')
-        .select('id, name')
+        .select('id, name, parent_id, sort_order')
+    const categories = flattenCategories(categoryRows || []).map(c => ({ id: c.id, name: c.label }))
 
     async function createIdea(formData: FormData) {
         'use server'

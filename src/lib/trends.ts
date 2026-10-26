@@ -348,3 +348,27 @@ export async function getDailyTrends(_geo = '', _categories: string[] = []): Pro
         return true;
     });
 }
+
+/** Horas desde la publicación (Infinity si la fecha no se puede leer). */
+export function ageHours(pubDate?: string): number {
+    const t = Date.parse(pubDate || '')
+    return Number.isFinite(t) ? Math.max(0, (Date.now() - t) / 3600000) : Infinity
+}
+
+/** "hace 3 h" / "hace 2 días" */
+export function ageLabel(hours: number): string {
+    if (!Number.isFinite(hours)) return 'fecha desconocida'
+    if (hours < 1) return 'hace menos de 1 h'
+    if (hours < 48) return `hace ${Math.round(hours)} h`
+    return `hace ${Math.round(hours / 24)} días`
+}
+
+/** Búsqueda en Google News limitada a las últimas horas (when: 1d, 2d…). */
+export async function searchGoogleNews(query: string, opts: { lang?: 'es' | 'en'; gl?: string; limit?: number; when?: string; label?: string; categoryHint?: string } = {}): Promise<TrendItem[]> {
+    const lang = opts.lang || 'es'
+    const gl = opts.gl || 'US'
+    const params = lang === 'es' ? `hl=es-419&gl=${gl}&ceid=${gl}:es-419` : `hl=en-US&gl=US&ceid=US:en`
+    const q = `${query} when:${opts.when || '1d'}`
+    return fetchNewsRss(`https://news.google.com/rss/search?q=${encodeURIComponent(q)}&${params}`, opts.limit || 6,
+        opts.label || `Google News ${lang.toUpperCase()}${gl !== 'US' ? ' ' + gl : ''}`, 'google_news', opts.categoryHint)
+}

@@ -1,3 +1,4 @@
+import { flattenCategories } from '@/lib/ideas/category-options'
 import { createClient } from '@/lib/supabase/server'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -13,7 +14,9 @@ export default async function IdeasPage({ searchParams }: { searchParams: Promis
     const showArchived = show_archived === 'true'
 
     // Fetch categories for filter
-    const { data: categories } = await supabase.from('categories').select('id, name').order('name')
+    const { data: categoryRows } = await supabase.from('categories').select('id, name, parent_id, sort_order')
+    const categoryOptions = flattenCategories(categoryRows || [])
+    const categories = categoryOptions.map(c => ({ id: c.id, name: c.isParent ? c.label : `   ${c.label}` }))
 
     // Start building query
     let query = supabase
@@ -26,7 +29,9 @@ export default async function IdeasPage({ searchParams }: { searchParams: Promis
         query = query.eq('status', status)
     }
     if (category) {
-        query = query.eq('category_id', category)
+        // Una categoría principal incluye las ideas de todas sus subcategorías
+        const opt = categoryOptions.find(c => c.id === category)
+        query = opt?.isParent ? query.in('category_id', [category, ...opt.childIds]) : query.eq('category_id', category)
     }
 
     // Archive Logic: 
