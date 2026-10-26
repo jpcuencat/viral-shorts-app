@@ -93,8 +93,13 @@ const StoryboardSchema = z.looseObject({
 
 const PickSchema = z.looseObject({
     choice: z.coerce.number().int().catch(-1),
+    match: z.coerce.number().catch(5),
     reason: z.string().optional(),
 })
+/** Coincidencia mínima (0-10) entre el tramo y lo que dice la frase. Por debajo se busca otro video y, si no hay, tarjeta. */
+const MIN_SCENE_MATCH = 6
+/** Un mismo video de YouTube aporta como máximo a 2 escenas (evita reels con la misma toma repetida). */
+const MAX_SCENES_PER_VIDEO = 2
 
 const GateSchema = z.looseObject({
     is_real_footage: z.boolean().catch(false),
@@ -161,6 +166,7 @@ export class FootageFinder {
     private searched = new Set<string>()
     private analyzedCount = 0
     private lastVideoId = ''
+    private videoUses = new Map<string, number>()
     private storyboardOk = 0
     private readonly tempDir = path.join(process.cwd(), 'public', 'temp', 'footage')
     private readonly vaultDir = path.join(process.cwd(), 'public', 'ai-vault')
@@ -407,8 +413,8 @@ Respond ONLY with JSON: {"video_kind":"news_report|raw_footage|studio_talk|other
     }
 
     // ---------- 3. Elegir tramo para la escena ----------
-    private async pickSegment(sceneText: string, sceneQuery: string, needSec: number): Promise<Segment | null> {
-        const avail = this.segments.filter(s => !s.failed && s.end - s.usedUntil >= Math.min(needSec * 0.75, 4))
+    private async pickSegment(sceneText: string, sceneQuery: string, needSec: number, exclude: Set<string> = new Set()): Promise<Segment | null> {
+        const avail = this.segments.filter(s => !s.failed && !exclude.has(s.key) && (this.videoUses.get(s.videoId) || 0) < MAX_SCENES_PER_VIDEO && s.end - s.usedUntil >= Math.min(needSec * 0.75, 4))
         if (avail.length === 0) return null
         const list = avail.slice(0, 25)
         try {
@@ -420,11 +426,20 @@ VISUAL IDEA: "${sceneQuery}"
 SEGMENTS:
 ${list.map((s, i) => `[${i}] ${s.description} (relevance ${s.relevance}/10, ${Math.round(s.end - s.usedUntil)}s left, video ${s.videoId}${s.videoId === this.lastVideoId ? ' = SAME VIDEO AS PREVIOUS SCENE' : ''}${s.usedUntil > s.start + 0.5 ? ', PARTLY USED ALREADY' : ''})`).join('\n')}
 
-Prefer segments that match what the narration talks about. For variety, prefer a segment NOT used yet and from a DIFFERENT video than the previous scene, when it fits similarly well. Answer -1 only if NONE belongs to this story.
-Respond ONLY with JSON: {"choice":0,"reason":"..."}`
+Pick the segment that shows what THIS narration line talks about: the specific person, place, object or action it names.
+Also return "match" (0-10): 9-10 = shows exactly what the line says (e.g. the named player); 6-8 = clearly the same story and fits the line;
+0-5 = only loosely related (generic crowds, hotel doors, vehicles, people walking) — viewers would feel the image has nothing to do with what they hear.
+For variety, prefer a segment NOT used yet and from a DIFFERENT video than the previous scene, when it fits similarly well. Answer -1 if NONE belongs to this story.
+Respond ONLY with JSON: {"choice":0,"match":7,"reason":"..."}`
             const res = await generateJson(prompt, PickSchema, { label: 'FootagePick' })
             const seg = list[res.choice]
-            this.track('pick', { scene: sceneText.slice(0, 80), choice: res.choice, seg: seg?.key, desc: seg?.description, reason: res.reason })
+            this.track('pick', { scene: sceneText.slice(0, 80), choice: res.choice, match: res.match, seg: seg?.key, desc: seg?.description, reason: res.reason })
+            if (seg && res.match < MIN_SCENE_MATCH) {
+                // Toma genérica: no se usa; se busca otro video para esta escena (o se usará una tarjeta)
+                exclude.add(seg.key)
+                console.log(`[Footage] Tramo poco relacionado con la frase (${res.match}/10): ${seg.description}`)
+                return null
+            }
             return seg || null
         } catch {
             return list.sort((a, b) => b.relevance - a.relevance)[0]
@@ -578,13 +593,15 @@ Respond ONLY with JSON: {"is_real_footage":true,"is_relevant":true,"overlays":[{
             const extra = [...this.candidates.values()].filter(c => !c.analyzed && c.score >= 7).sort((a, b) => b.score - a.score)[0]
             if (extra) { newAnalyses++; await this.analyze(extra) }
         }
+        const excluded = new Set<string>()
         for (let round = 0; round < 6; round++) {
-            const seg = await this.pickSegment(p.sceneText, p.sceneQuery, clipLen)
+            const seg = await this.pickSegment(p.sceneText, p.sceneQuery, clipLen, excluded)
             if (seg) {
                 const res = await this.downloadAndClean(seg, clipLen, p)
                 if (res) {
                     p.usedFiles.add(res.file)
                     this.lastVideoId = seg.videoId
+                    this.videoUses.set(seg.videoId, (this.videoUses.get(seg.videoId) || 0) + 1)
                     console.log(`[Footage] Escena ${p.sceneIndex + 1}: ${seg.description} (${seg.videoId} ${fmt(seg.usedUntil - clipLen)}) en ${Math.round((Date.now() - t) / 1000)}s`)
                     return {
                         imagePath: path.join(this.vaultDir, res.file),
