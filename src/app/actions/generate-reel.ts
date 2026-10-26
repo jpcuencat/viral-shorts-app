@@ -159,6 +159,11 @@ export async function replaceSingleReelScene(
                 personFreePrompt: customText || target.personFreePrompt
             })
 
+        // La revisión visual rechazó todas las imágenes IA (persona falsa o letras inventadas)
+        if (!vaultResult.imagePath) {
+            return { success: false, error: 'No se pudo generar una imagen limpia para esta escena (sin personas falsas ni letras inventadas). Prueba con otra indicación, sube una foto propia o usa un video.' }
+        }
+
         const publicDir = path.join(process.cwd(), 'public')
         const relMedia = vaultResult.imagePath.startsWith(publicDir)
             ? '/' + path.relative(publicDir, vaultResult.imagePath).replace(/\\/g, '/')

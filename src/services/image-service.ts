@@ -7,7 +7,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { randomUUID as uuidv4 } from 'crypto'
 import { generateJson } from '@/lib/ai/gemini'
-import { ClipRelevanceSchema } from '@/lib/ai/schemas'
+import { ClipRelevanceSchema, AiImageGateSchema } from '@/lib/ai/schemas'
 import { FFMPEG_PATH, FFPROBE_PATH, YTDLP_PATH, BROADCAST_SAFE_CROP } from '@/lib/media-config'
 import { vaultStore, type VaultEntry } from '@/lib/vault-store'
 import { generateHfImage } from '@/services/hf-image'
@@ -19,6 +19,8 @@ const ffmpegPath = FFMPEG_PATH
 const CLIP_GATE_VERSION = 'v3'
 /** Intentos máximos de descarga de clips nuevos por escena (cada intento rechazado se excluye del siguiente). */
 const MAX_CLIP_ATTEMPTS = 2
+/** Versión de la revisión visual de imágenes IA. Solo se reutilizan del vault las imágenes aprobadas por esta versión. */
+const AI_IMAGE_GATE_VERSION = 'ai-v1'
 
 export type { VaultEntry }
 
@@ -87,6 +89,8 @@ class ImageService {
             // Solo se descartan los rechazados por la versión ACTUAL del filtro (los antiguos se re-evalúan)
             if (entryType === 'video' && entry.clipCheck === `${CLIP_GATE_VERSION}-rejected`) continue
             if (entryType === 'image' && opts.requirePersonFree && !entry.personFree) continue
+            // Imágenes IA: solo las aprobadas por la revisión visual actual (sin letras inventadas ni personas falsas)
+            if (entryType === 'image' && entry.clipCheck !== AI_IMAGE_GATE_VERSION) continue
 
             const fullPath = path.join(this.vaultDir, entry.fileName)
             if (!fsSync.existsSync(fullPath)) continue
@@ -141,7 +145,8 @@ class ImageService {
             tags: sceneTags.map(t => this.slugify(t)).filter(Boolean),
             prompt,
             createdAt: new Date().toISOString(),
-            ...(personFree ? { personFree: true } : {})
+            ...(personFree ? { personFree: true } : {}),
+            clipCheck: AI_IMAGE_GATE_VERSION,
         }
 
         await vaultStore.add(newEntry)
@@ -591,6 +596,28 @@ Respond ONLY with JSON: {"valid": bool, "has_overlay_text": bool, "has_logo_or_w
         }
     }
 
+    /** Revisión visual de una imagen IA con Gemini. Si la revisión no está disponible, se acepta (no bloquea el reel). */
+    private async checkAiImage(buffer: Buffer, prompt: string, realPerson: boolean): Promise<{ ok: boolean; reason: string }> {
+        try {
+            const small = await sharp(buffer).resize(512, 910, { fit: 'inside' }).jpeg({ quality: 80 }).toBuffer()
+            const verdict = await generateJson([
+                `You review an AI-generated image for a news & explainer short video. Intended scene: "${prompt.slice(0, 400)}".
+Set "has_person": true if ANY human being, face, silhouette that reads as a specific person, or human body is clearly visible (tiny distant crowd specks do NOT count).
+Set "has_visible_text": true ONLY if there is PROMINENT fake lettering a viewer would notice and read as misspelled or gibberish: large words on banners, signs, posters, name tags, vests, uniforms, headlines or labels in the foreground. Small, distant, blurry or partial text on screens, papers, chalkboards, panels or code listings does NOT count.
+Set "is_relevant": true unless the image clearly shows something unrelated to the intended scene (small period inaccuracies do NOT matter).
+Respond ONLY with JSON: {"has_person": bool, "has_visible_text": bool, "is_relevant": bool, "reason": "short explanation"}`,
+                { inlineData: { data: small.toString('base64'), mimeType: 'image/jpeg' } },
+            ], AiImageGateSchema, { label: 'AIImageGate', retries: 1 })
+            if (realPerson && verdict.has_person) return { ok: false, reason: `muestra una persona (escena de persona real): ${verdict.reason || ''}` }
+            if (verdict.has_visible_text) return { ok: false, reason: `tiene letras inventadas: ${verdict.reason || ''}` }
+            if (verdict.is_relevant === false) return { ok: false, reason: `no corresponde a la escena: ${verdict.reason || ''}` }
+            return { ok: true, reason: 'ok' }
+        } catch (err: any) {
+            console.warn(`[AIGate] Revisión no disponible (${err?.message || err}); se acepta la imagen`)
+            return { ok: true, reason: 'revisión no disponible' }
+        }
+    }
+
     /**
      * Obtiene el visual de una escena según el modo:
      * - 'ai_images': imágenes IA guardadas en el vault
@@ -695,25 +722,54 @@ Respond ONLY with JSON: {"valid": bool, "has_overlay_text": bool, "has_logo_or_w
             ? `${baseNegative}, face, portrait, close-up of a person, identifiable person, celebrity, priest portrait, politician portrait`
             : baseNegative
 
+        // Generación + REVISIÓN VISUAL: los modelos turbo ignoran el prompt negativo, así que cada imagen se
+        // revisa con Gemini antes de usarla. Se rechaza si muestra una persona cuando la escena trata de una
+        // persona real (sería una cara falsa) o si tiene letras/carteles inventados. Hasta 2 intentos.
+        const subjectWords = subjectKey.replace(/_/g, ' ').split(/\s+/).filter(w => w.length > 2)
+        const stripSubject = (t: string) => subjectWords.reduce((acc, w) => acc.replace(new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi'), ''), t).replace(/\s{2,}/g, ' ')
+        const attempts = realPerson
+            ? [
+                `Empty unoccupied scene with absolutely no humans, no people, no faces, no hands: ${stripSubject(effectivePrompt)}. Deserted, nobody present, still life`,
+                `Close-up still life photograph of objects only (no humans, no body parts, no screens with writing) evoking: ${stripSubject(effectivePrompt)}`,
+            ]
+            : [effectivePrompt, `${effectivePrompt}. Plain surfaces, no signs, no banners, no writing of any kind`]
+
         let imageBuffer: Buffer | null = null
         let providerLabel = 'Flux AI'
-
-        // Hugging Face: mejores modelos actuales con respaldo entre proveedores (ver hf-image.ts)
-        const hf = await generateHfImage(realPerson ? `${effectivePrompt}, no people, no faces` : effectivePrompt, negativePrompt)
-        if (hf) {
-            imageBuffer = hf.buffer
-            providerLabel = hf.label
-        } else {
-            console.warn('[ImageService] Hugging Face no generó la imagen, se usa Pollinations Flux')
+        let lastRejection = ''
+        for (const attemptPrompt of attempts) {
+            let buf: Buffer | null = null
+            let label = 'Flux AI'
+            const hf = await generateHfImage(attemptPrompt, negativePrompt)
+            if (hf) {
+                buf = hf.buffer
+                label = hf.label
+            } else {
+                try {
+                    const seed = Math.floor(Math.random() * 999999)
+                    const fluxPrompt = realPerson ? `${attemptPrompt}, no people, no faces` : attemptPrompt
+                    const fluxUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(fluxPrompt)}?width=1080&height=1920&model=flux&nologo=true&seed=${seed}`
+                    const response = await axios({ url: fluxUrl, method: 'GET', responseType: 'arraybuffer', timeout: 25000 })
+                    buf = Buffer.from(response.data)
+                } catch (e: any) {
+                    lastRejection = `sin generador disponible (${e?.message || e})`
+                    continue
+                }
+            }
+            const gate = await this.checkAiImage(buf, attemptPrompt, realPerson)
+            if (gate.ok) {
+                imageBuffer = buf
+                providerLabel = label
+                break
+            }
+            lastRejection = gate.reason
+            console.warn(`[AIGate] Imagen IA rechazada (${label}): ${gate.reason}`)
         }
 
         if (!imageBuffer) {
-            providerLabel = 'Flux AI'
-            const seed = Math.floor(Math.random() * 999999)
-            const fluxPrompt = realPerson ? `${effectivePrompt}, no people, no faces` : effectivePrompt
-            const fluxUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(fluxPrompt)}?width=1080&height=1920&model=flux&nologo=true&seed=${seed}`
-            const response = await axios({ url: fluxUrl, method: 'GET', responseType: 'arraybuffer', timeout: 25000 })
-            imageBuffer = Buffer.from(response.data)
+            // Sin imagen limpia: la escena pasa a tarjeta informativa (el pipeline la renderiza)
+            console.warn(`[AIGate] Sin imagen IA aceptable para "${subjectKey}": se usa tarjeta informativa`)
+            return { imagePath: '', sourceLabel: `Tarjeta informativa (imagen IA rechazada: ${lastRejection})`, fromVault: false, kind: 'news_card' }
         }
 
         const savedEntry = await this.saveImageToVault(imageBuffer, category, subjectKey, sceneTags, effectivePrompt, realPerson)

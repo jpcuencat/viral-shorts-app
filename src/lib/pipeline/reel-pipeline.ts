@@ -9,6 +9,7 @@ import { subtitleService } from '@/services/subtitle-service'
 import { saveSceneManifest, type SceneManifestEntry } from '@/lib/scene-store'
 import { FootageFinder } from '@/services/footage/footage-finder'
 import { insightsPromptBlock } from '@/lib/learning/insights'
+import { animateImage } from '@/services/hf-video'
 import { JobCancelledError, type ProgressReporter } from '@/lib/jobs/types'
 import fs from 'fs'
 import path from 'path'
@@ -404,6 +405,8 @@ Respond ONLY with JSON: {"topic_type": "...", "location_label": "...", "scenes":
             }
             const processedScenes: ProcessedScene[] = []
 
+            // Escenas con imagen IA que se animan con Hugging Face (0 = ninguna). Por defecto solo la primera (el gancho).
+            const animateScenes = Math.max(0, Number(process.env.HF_ANIMATE_SCENES ?? 1) || 0)
             for (let i = 0; i < scenesData.length; i++) {
                 const scene = scenesData[i]
                 const plan: SceneVisualPlan = visualPlans[i] || {
@@ -485,6 +488,22 @@ Respond ONLY with JSON: {"topic_type": "...", "location_label": "...", "scenes":
                         realPerson: Boolean(plan.shows_real_person),
                         personFreePrompt: plan.person_free_prompt
                     })
+                }
+                // ANIMACIÓN (Hugging Face): las primeras N escenas con imagen IA se convierten en un clip con
+                // movimiento real en vez del zoom lento. Solo imágenes IA (nunca fotos reales de personas).
+                if (vaultResult.kind === 'ai_image' && vaultResult.imagePath && i < animateScenes) {
+                    const animPath = vaultResult.imagePath.replace(/\.(jpe?g|png|webp)$/i, '') + '.anim.mp4'
+                    try {
+                        if (!fs.existsSync(animPath)) {
+                            const anim = await animateImage(vaultResult.imagePath, plan.hf_prompt || scene.visual || ideaTitle)
+                            if (anim) fs.writeFileSync(animPath, anim.buffer)
+                        }
+                        if (fs.existsSync(animPath)) {
+                            vaultResult = { ...vaultResult, imagePath: animPath, sourceLabel: `${vaultResult.sourceLabel} · animada` }
+                        }
+                    } catch (e: any) {
+                        console.warn(`[ReelGen] No se pudo animar la escena ${i + 1}: ${e?.message || e}`)
+                    }
                 }
                 console.log(`[ReelGen] Escena ${i + 1}: ${strategy} -> ${vaultResult.kind}${plan.shows_real_person ? ' (persona real)' : ''} · ${vaultResult.sourceLabel}`)
 
@@ -675,6 +694,19 @@ Respond ONLY with JSON: {"topic_type": "...", "location_label": "...", "scenes":
                             realPerson: targetScene.realPerson,
                             personFreePrompt: targetScene.personFreePrompt
                         })
+                        // La revisión visual rechazó las imágenes IA: tarjeta informativa en su lugar
+                        if (healedVault.kind === 'news_card' && !healedVault.imagePath) {
+                            const bg = processedScenes.find((sc, k) => k !== weakIdx && sc.sourceKind === 'real_video')?.imagePath
+                            const card = targetScene.card || {
+                                kicker: 'QUÉ SE SABE',
+                                headline: targetScene.sceneData.caption || targetScene.sceneData.text.split(' ').slice(0, 9).join(' '),
+                            }
+                            const cardPath = await cardService.renderNewsCard({
+                                ...card, location: locationLabel, dateLabel, sourceLabel, backgroundMedia: bg, variant: weakIdx + 1,
+                            })
+                            healedVault = { imagePath: cardPath, sourceLabel: `Tarjeta informativa: ${card.headline}`, fromVault: false, kind: 'news_card' }
+                            targetScene.card = card
+                        }
 
                         const publicDir = path.join(process.cwd(), 'public')
                         processedScenes[weakIdx] = {

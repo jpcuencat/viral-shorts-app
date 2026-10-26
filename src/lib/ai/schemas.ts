@@ -91,6 +91,14 @@ export const FollowUpListSchema = z.array(
     })
 ).min(1)
 
+/** Revisión visual de una imagen IA antes de usarla (personas reales y letras inventadas). */
+export const AiImageGateSchema = z.looseObject({
+    has_person: z.boolean().catch(false),
+    has_visible_text: z.boolean().catch(false),
+    is_relevant: z.boolean().catch(true),
+    reason: z.string().optional(),
+})
+
 export const ClipRelevanceSchema = z.looseObject({
     valid: z.boolean(),
     has_overlay_text: z.boolean().optional(),
