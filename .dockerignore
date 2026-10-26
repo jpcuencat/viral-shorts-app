@@ -1,0 +1,21 @@
+node_modules
+.next
+.git
+.env*
+!.env.example
+logs
+data
+ffmpeg
+bin
+_to_delete
+.backup-fase1
+Claude outputs
+public/output
+public/ai-vault
+public/temp
+public/custom-photos
+public/custom-videos
+public/hf-test
+public/__tmp-n8n-patch.js
+tsconfig.tsbuildinfo
+*.log

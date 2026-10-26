@@ -34,3 +34,17 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Docker (prueba local fuera del entorno de desarrollo)
+
+Requiere Docker Desktop. Desde la carpeta del proyecto:
+
+```bash
+docker compose --env-file .env.local up --build -d
+```
+
+- La app queda en http://localhost:3100 (el entorno de desarrollo sigue en el 3000).
+- Antes de usarla, detén `npm run dev:all`: el contenedor trae su propio worker de reels y los dos tomarían los mismos trabajos.
+- n8n se alcanza desde el contenedor por `host.docker.internal` (variable `N8N_LOCALHOST_ALIAS`).
+- Los reels, el vault y los archivos subidos quedan en volúmenes de Docker (`docker compose down` los conserva; `down -v` los borra).
+- Logs: `docker compose logs -f app`.

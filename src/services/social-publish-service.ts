@@ -57,7 +57,14 @@ export function extractYouTubeVideoId(input: string): string | null {
 }
 
 /** n8n: intenta primero la URL de producción (/webhook/) y luego la de prueba (/webhook-test/). */
-async function postToN8n(webhookUrl: string, init: RequestInit, buildBody: () => BodyInit): Promise<Response> {
+/** En Docker, "localhost" es el propio contenedor: N8N_LOCALHOST_ALIAS (p. ej. host.docker.internal) apunta al n8n del equipo. */
+function resolveN8nUrl(url: string): string {
+    const alias = process.env.N8N_LOCALHOST_ALIAS?.trim()
+    return alias ? url.replace(/\/\/(localhost|127\.0\.0\.1)(?=[:/])/, `//${alias}`) : url
+}
+
+async function postToN8n(webhookUrlRaw: string, init: RequestInit, buildBody: () => BodyInit): Promise<Response> {
+    const webhookUrl = resolveN8nUrl(webhookUrlRaw)
     const prodUrl = webhookUrl.replace('/webhook-test/', '/webhook/')
     const testUrl = webhookUrl.includes('/webhook-test/') ? webhookUrl : webhookUrl.replace('/webhook/', '/webhook-test/')
     let res = await fetch(prodUrl, { ...init, method: 'POST', body: buildBody() })

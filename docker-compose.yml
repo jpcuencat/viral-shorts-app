@@ -1,0 +1,35 @@
+# Uso (desde la carpeta del proyecto):
+#   docker compose --env-file .env.local up --build -d
+# Abre http://localhost:3100. Antes, detén `npm run dev:all`: los dos workers tomarían los mismos trabajos de la cola.
+services:
+  app:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+    image: viral-shorts-app:local
+    env_file: .env.local
+    environment:
+      # n8n corre en el equipo: desde el contenedor se llega por host.docker.internal
+      N8N_LOCALHOST_ALIAS: host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3100:3000"
+    volumes:
+      - output:/app/public/output
+      - vault:/app/public/ai-vault
+      - temp:/app/public/temp
+      - photos:/app/public/custom-photos
+      - videos:/app/public/custom-videos
+      - logs:/app/logs
+    restart: unless-stopped
+
+volumes:
+  output:
+  vault:
+  temp:
+  photos:
+  videos:
+  logs:
