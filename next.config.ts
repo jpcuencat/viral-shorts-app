@@ -5,6 +5,12 @@ import type { NextConfig } from "next";
 const RUNTIME_DIRS = ['output', 'ai-vault', 'custom-photos', 'custom-videos', 'hf-test', 'temp'];
 
 const nextConfig: NextConfig = {
+  // Acceso desde fuera por el túnel de Cloudflare (URL fija del dominio propio o *.trycloudflare.com)
+  experimental: {
+    serverActions: {
+      allowedOrigins: ['*.trycloudflare.com', ...(process.env.PUBLIC_APP_URL ? [new URL(process.env.PUBLIC_APP_URL).host] : [])],
+    },
+  },
   async rewrites() {
     return {
       beforeFiles: [],

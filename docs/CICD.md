@@ -35,3 +35,28 @@ verifica `http://localhost:3100/api/health`. Si la nueva versión no responde sa
 - Los reels, el vault y los archivos subidos viven en volúmenes de Docker y se conservan entre despliegues.
 - Estado de la app: `http://localhost:3100/api/health` (versión desplegada y conexión a la base de datos).
 - Logs: `docker compose logs -f app`.
+
+## Acceso desde fuera (túnel de Cloudflare)
+
+```bash
+npm run tunnel          # levanta el túnel y muestra la URL pública
+npm run tunnel -- stop  # lo apaga
+```
+
+El túnel corre en su propio contenedor (`viral-shorts-tunnel`). Los despliegues (`deploy:local` y el CD) solo
+recrean el contenedor `app`, así que **la URL no cambia al desplegar**.
+
+| Modo | Cómo se activa | URL |
+|---|---|---|
+| Túnel rápido (por defecto) | Sin configurar nada | `https://xxxx.trycloudflare.com`. Gratis y sin cuenta. Se mantiene entre despliegues; cambia solo si se reinicia el contenedor del túnel (p. ej. al reiniciar el equipo). |
+| Túnel con nombre (URL fija) | `CLOUDFLARE_TUNNEL_TOKEN` y `PUBLIC_APP_URL` en `.env.local` | Siempre la misma (ej. `https://app.tudominio.com`). Requiere un dominio en Cloudflare. |
+
+Configurar el túnel con nombre (gratis, una vez):
+1. Agrega tu dominio a Cloudflare (plan Free).
+2. Cloudflare Zero Trust → Networks → Tunnels → *Create a tunnel* → Cloudflared → nombre `viral-shorts`.
+3. Copia el **token** que muestra y ponlo en `.env.local` como `CLOUDFLARE_TUNNEL_TOKEN=...` (y en el secreto `ENV_LOCAL` de GitHub).
+4. En *Public Hostname*: subdominio `app`, tu dominio, servicio `HTTP` → `app:3000`.
+5. En `.env.local`: `PUBLIC_APP_URL=https://app.tudominio.com`. Luego `npm run deploy:local` y `npm run tunnel`.
+
+Notas: el inicio de sesión con correo y contraseña funciona por el túnel sin cambios. Si usas el enlace mágico por correo,
+agrega la URL del túnel en Supabase → Authentication → URL Configuration → Redirect URLs.

@@ -44,6 +44,16 @@ async function waitHealthy(version) {
     return false
 }
 
+/** URL pública del túnel, si está corriendo (no se toca en el despliegue). */
+async function publicUrl() {
+    if (process.env.PUBLIC_APP_URL) return process.env.PUBLIC_APP_URL
+    try {
+        const r = await fetch('http://127.0.0.1:2000/quicktunnel', { signal: AbortSignal.timeout(3000) })
+        const j = await r.json()
+        return j.hostname ? `https://${j.hostname}` : ''
+    } catch { return '' }
+}
+
 async function main() {
     if (!fs.existsSync(ENV_FILE)) throw new Error(`No existe ${ENV_FILE} (variables de entorno de la app)`)
     if (!out('docker', ['version', '--format', '{{.Server.Version}}'])) throw new Error('Docker no está corriendo')
@@ -68,9 +78,9 @@ async function main() {
 
     // 3. Construir y levantar la nueva versión
     log('Construyendo la imagen…')
-    compose(['build'], { APP_VERSION: version })
+    compose(['build', 'app'], { APP_VERSION: version })
     log('Levantando el contenedor…')
-    compose(['up', '-d', '--no-build', '--remove-orphans'], { APP_VERSION: version })
+    compose(['up', '-d', '--no-build', '--no-deps', 'app'], { APP_VERSION: version })
 
     // 4. Verificar salud; si falla, volver a la versión anterior
     log(`Esperando que ${HEALTH_URL} responda con la versión ${version}…`)
@@ -78,12 +88,14 @@ async function main() {
         run('docker', ['tag', `${IMAGE}:${version}`, `${IMAGE}:latest`])
         spawnSync('docker', ['image', 'prune', '-f'], { stdio: 'ignore' })
         log(`✅ Desplegado ${version} en http://localhost:3100`)
+        const pub = await publicUrl()
+        if (pub) log(`🌐 Desde fuera (mismo túnel de siempre): ${pub}`)
         return
     }
     spawnSync('docker', ['compose', '--env-file', ENV_FILE, 'logs', '--tail', '80', 'app'], { stdio: 'inherit' })
     if (currentImageId) {
         log('↩ Volviendo a la versión anterior…')
-        compose(['up', '-d', '--no-build'], { APP_VERSION: 'rollback' })
+        compose(['up', '-d', '--no-build', '--no-deps', 'app'], { APP_VERSION: 'rollback' })
         const back = await waitHealthy('rollback')
         log(back ? 'La versión anterior quedó funcionando.' : '⚠ La versión anterior tampoco respondió: revisa `docker compose logs app`.')
     }
