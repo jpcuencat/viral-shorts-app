@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getAdminClient, hasAdminCredentials } from '@/lib/supabase/admin'
+import { getPublicAccess } from '@/lib/tunnel/public-url'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,5 +17,6 @@ export async function GET() {
         }
     }
     const ok = db === 'ok'
-    return NextResponse.json({ ok, version, db, time: new Date().toISOString() }, { status: ok ? 200 : 503 })
+    const publicAccess = await getPublicAccess()
+    return NextResponse.json({ ok, version, db, publicAccess, time: new Date().toISOString() }, { status: ok ? 200 : 503 })
 }

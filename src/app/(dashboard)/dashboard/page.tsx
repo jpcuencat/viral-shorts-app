@@ -6,10 +6,12 @@ import Link from 'next/link'
 import { Sparkles, Library, Layers, ArrowRight, Play, FileText, TrendingUp } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { RefreshTrendsButton } from '@/components/dashboard/refresh-trends-button'
+import { getPublicAccess } from '@/lib/tunnel/public-url'
 
 export default async function DashboardPage() {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
+    const publicAccess = await getPublicAccess()
 
     // Fetch recent ideas
     const { data: recentIdeas } = await supabase
@@ -57,6 +59,14 @@ export default async function DashboardPage() {
             <div>
                 <h1 className="text-3xl font-bold tracking-tight">Welcome back!</h1>
                 <p className="text-muted-foreground">Here's an overview of your creative studio.</p>
+                {publicAccess && (
+                    <p className="mt-2 text-sm">
+                        <span className={publicAccess.connected ? 'text-emerald-600' : 'text-amber-600'}>●</span>{' '}
+                        Acceso desde fuera:{' '}
+                        <a href={publicAccess.url} target="_blank" rel="noreferrer" className="font-medium underline underline-offset-2">{publicAccess.url}</a>
+                        {!publicAccess.connected && <span className="text-muted-foreground"> (reconectando… la URL puede cambiar en un minuto)</span>}
+                    </p>
+                )}
             </div>
 
             {/* Modules Grid */}

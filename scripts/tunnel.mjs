@@ -24,7 +24,8 @@ async function main() {
     // Si ya existe un túnel del otro tipo, se reemplaza; si es el mismo, NO se recrea (la URL se mantiene)
     const running = spawnSync('docker', ['inspect', '--format', '{{index .Config.Labels "com.docker.compose.service"}}', 'viral-shorts-tunnel'], { encoding: 'utf8' }).stdout?.trim()
     if (running && running !== service) spawnSync('docker', ['rm', '-f', 'viral-shorts-tunnel'], { stdio: 'inherit' })
-    const r = dc(['up', '-d', '--no-recreate', service])
+    // --build: solo recrea el túnel si cambió su imagen o configuración (los despliegues de la app no lo tocan)
+    const r = dc(['up', '-d', '--build', '--no-deps', service])
     if (r.status !== 0) process.exit(1)
 
     if (named) {
@@ -34,7 +35,12 @@ async function main() {
     for (let i = 0; i < 20; i++) {
         try {
             const j = await (await fetch('http://127.0.0.1:2000/quicktunnel', { signal: AbortSignal.timeout(3000) })).json()
-            if (j.hostname) {
+            const ready = await fetch('http://127.0.0.1:2000/ready', { signal: AbortSignal.timeout(3000) }).then(r => r.ok).catch(() => false)
+            if (j.hostname && !ready && i === 19) {
+                console.log(`[tunnel] El túnel ${j.hostname} no está conectado; el vigilante lo reiniciará solo en ~1 min con una URL nueva. Vuelve a ejecutar npm run tunnel.`)
+                return
+            }
+            if (j.hostname && ready) {
                 console.log(`[tunnel] 🌐 App desde fuera: https://${j.hostname}`)
                 console.log('[tunnel] Esta URL se mantiene en los despliegues; cambia solo si se reinicia el contenedor del túnel.')
                 return

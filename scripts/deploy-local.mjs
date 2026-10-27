@@ -50,7 +50,9 @@ async function publicUrl() {
     try {
         const r = await fetch('http://127.0.0.1:2000/quicktunnel', { signal: AbortSignal.timeout(3000) })
         const j = await r.json()
-        return j.hostname ? `https://${j.hostname}` : ''
+        const ready = await fetch('http://127.0.0.1:2000/ready', { signal: AbortSignal.timeout(3000) }).then(x => x.ok).catch(() => false)
+        if (!j.hostname) return ''
+        return ready ? `https://${j.hostname}` : `https://${j.hostname} (desconectado: el vigilante del túnel lo está reconectando; la URL nueva saldrá en el Dashboard)`
     } catch { return '' }
 }
 

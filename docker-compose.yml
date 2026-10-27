@@ -17,6 +17,8 @@ services:
       APP_VERSION: ${APP_VERSION:-latest}
       # n8n corre en el equipo: desde el contenedor se llega por host.docker.internal
       N8N_LOCALHOST_ALIAS: host.docker.internal
+      # URL pública activa del túnel rápido (se muestra en el Dashboard y en /api/health)
+      TUNNEL_METRICS_URL: http://viral-shorts-tunnel:2000
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -47,13 +49,16 @@ services:
     depends_on: [app]
     restart: unless-stopped
 
-  # Túnel rápido (trycloudflare.com): gratis y sin cuenta; la URL se mantiene entre despliegues,
-  # pero cambia si este contenedor se reinicia (p. ej. al reiniciar el equipo).
+  # Túnel rápido (trycloudflare.com): gratis y sin cuenta; la URL se mantiene entre despliegues.
+  # Un vigilante lo reconecta solo si se cae (tras reiniciar o suspender el equipo); entonces la URL cambia
+  # y la nueva se ve en el Dashboard, en /api/health y con `npm run tunnel`.
   tunnel-rapido:
-    image: cloudflare/cloudflared:2024.12.2
+    build: ./tunnel
+    image: viral-shorts-tunnel:2
     container_name: viral-shorts-tunnel
     profiles: ["tunnel-rapido"]
-    command: tunnel --no-autoupdate --metrics 0.0.0.0:2000 --url http://app:3000
+    environment:
+      TUNNEL_TARGET: http://app:3000
     ports:
       - "127.0.0.1:2000:2000"
     depends_on: [app]

@@ -48,7 +48,7 @@ recrean el contenedor `app`, así que **la URL no cambia al desplegar**.
 
 | Modo | Cómo se activa | URL |
 |---|---|---|
-| Túnel rápido (por defecto) | Sin configurar nada | `https://xxxx.trycloudflare.com`. Gratis y sin cuenta. Se mantiene entre despliegues; cambia solo si se reinicia el contenedor del túnel (p. ej. al reiniciar el equipo). |
+| Túnel rápido (por defecto) | Sin configurar nada | `https://xxxx.trycloudflare.com`. Gratis y sin cuenta. Se mantiene entre despliegues. Si se cae (al reiniciar o suspender el equipo Cloudflare borra los túneles rápidos), un vigilante lo reconecta solo en ~1 min con una URL nueva, que aparece en el Dashboard y en `/api/health`. |
 | Túnel con nombre (URL fija) | `CLOUDFLARE_TUNNEL_TOKEN` y `PUBLIC_APP_URL` en `.env.local` | Siempre la misma (ej. `https://app.tudominio.com`). Requiere un dominio en Cloudflare. |
 
 Configurar el túnel con nombre (gratis, una vez):
